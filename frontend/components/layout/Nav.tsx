@@ -1,0 +1,90 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
+import { motion } from "motion/react";
+import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
+
+interface NavProps {
+  userEmail?: string | null;
+}
+
+const links = [
+  { href: "/documents", label: "Documents" },
+  { href: "/chat", label: "Chat" },
+];
+
+export default function Nav({ userEmail }: NavProps) {
+  const pathname = usePathname();
+  const router = useRouter();
+
+  async function handleSignOut() {
+    const supabase = getSupabaseBrowserClient();
+    await supabase.auth.signOut();
+    router.push("/login");
+    router.refresh();
+  }
+
+  return (
+    <header className="sticky top-0 z-10 bg-background/85 backdrop-blur-md">
+      <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
+        <div className="flex items-center gap-8">
+          <Link href="/documents" className="flex items-center gap-2">
+            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary font-heading text-sm font-semibold text-primary-foreground">
+              D
+            </div>
+            <span className="font-heading text-lg font-semibold tracking-tight text-foreground">
+              Docent
+            </span>
+          </Link>
+          <nav className="flex items-center gap-1 rounded-xl bg-surface-muted/70 p-1">
+            {links.map((link) => {
+              const isActive = pathname.startsWith(link.href);
+              return (
+                <Link
+                  key={link.href}
+                  href={link.href}
+                  className="relative rounded-lg px-3.5 py-1.5 text-sm font-medium transition-colors"
+                >
+                  {isActive && (
+                    <motion.div
+                      layoutId="nav-active-indicator"
+                      className="absolute inset-0 rounded-lg bg-primary shadow-card"
+                      transition={{ type: "spring", stiffness: 380, damping: 32 }}
+                    />
+                  )}
+                  <span
+                    className={`relative z-10 ${
+                      isActive
+                        ? "text-primary-foreground"
+                        : "text-muted hover:text-foreground"
+                    }`}
+                  >
+                    {link.label}
+                  </span>
+                </Link>
+              );
+            })}
+          </nav>
+        </div>
+        <div className="flex items-center gap-4">
+          {userEmail && (
+            <span className="hidden text-sm text-muted sm:inline">
+              {userEmail}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={handleSignOut}
+            className="rounded-lg bg-surface px-3 py-1.5 text-sm font-medium text-foreground shadow-card transition-colors hover:bg-surface-muted"
+          >
+            Sign out
+          </button>
+          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-card">
+            <span className="material-symbols-outlined text-[18px]">person</span>
+          </div>
+        </div>
+      </div>
+    </header>
+  );
+}

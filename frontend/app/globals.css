@@ -1,0 +1,147 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Colors are stored as space-separated RGB components (not hex) so Tailwind
+ * can apply opacity modifiers, e.g. `bg-danger/10`, via
+ * `rgb(var(--danger) / <alpha-value>)` in tailwind.config.ts.
+ */
+:root {
+  --background: 251 248 255; /* #fbf8ff */
+  --foreground: 27 27 33; /* #1b1b21 */
+  --surface: 255 255 255; /* #ffffff */
+  --surface-muted: 245 242 251; /* #f5f2fb */
+  --border: 227 228 233; /* #e3e4e9 */
+  --primary: 37 99 235; /* #2563eb */
+  --primary-hover: 29 78 216; /* #1d4ed8 */
+  --primary-foreground: 255 255 255;
+  --muted: 107 114 128; /* #6b7280 */
+  --success: 22 163 74; /* #16a34a */
+  --warning: 217 119 6; /* #d97706 */
+  --danger: 186 26 26; /* #ba1a1a */
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system,
+    sans-serif;
+  --font-heading: var(--font-geist-sans), var(--font-sans);
+  --font-mono: var(--font-jetbrains-mono), ui-monospace, "SFMono-Regular",
+    Menlo, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: 15 12 18; /* #0f0c12 */
+    --foreground: 244 244 246; /* #f4f4f6 */
+    --surface: 20 20 25; /* #141419 */
+    --surface-muted: 31 28 38; /* #1f1c26 */
+    --border: 42 42 51; /* #2a2a33 */
+    --primary: 66 137 247; /* #4289f7 */
+    --primary-hover: 109 172 255; /* #6dacff */
+    --primary-foreground: 255 255 255;
+    --muted: 156 163 175; /* #9ca3af */
+    --success: 34 197 94; /* #22c55e */
+    --warning: 245 158 11; /* #f59e0b */
+    --danger: 241 116 116; /* #f17474 */
+  }
+}
+
+html {
+  color-scheme: light dark;
+}
+
+/*
+ * The Material Symbols Outlined webfont (linked in app/layout.tsx) only
+ * renders as glyphs, rather than literal icon-name text, once this class is
+ * defined -- Google's font CSS ships this alongside the font in a full
+ * stylesheet import, but we only linked the raw font file, so it has to be
+ * declared by hand here.
+ */
+.material-symbols-outlined {
+  font-family: "Material Symbols Outlined";
+  font-weight: normal;
+  font-style: normal;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  -webkit-font-feature-settings: "liga";
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  border-color: rgb(var(--border));
+}
+
+body {
+  background: rgb(var(--background));
+  color: rgb(var(--foreground));
+  font-family: var(--font-sans);
+}
+
+@layer base {
+  body {
+    @apply text-base;
+  }
+}
+
+@layer utilities {
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 8px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: rgb(var(--border));
+    border-radius: 9999px;
+  }
+
+  /*
+   * Indeterminate progress bar for upload/link/wake states where we don't
+   * have a real byte-percentage to report (supabase-js's storage upload
+   * doesn't expose progress events) - a sliding bar signals "in progress"
+   * without implying a false sense of exact completion.
+   */
+  .animate-indeterminate {
+    animation: indeterminate-progress 1.4s ease-in-out infinite;
+  }
+}
+
+@keyframes indeterminate-progress {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}
+
+/*
+ * Theme sonner's <Toaster /> off the same CSS custom properties as the rest
+ * of the app instead of its own default palette, so toasts look native to
+ * Docent in both light and dark mode.
+ */
+[data-sonner-toaster] {
+  --normal-bg: rgb(var(--surface));
+  --normal-border: rgb(var(--border));
+  --normal-text: rgb(var(--foreground));
+  --success-bg: rgb(var(--surface));
+  --success-border: rgb(var(--success));
+  --success-text: rgb(var(--success));
+  --error-bg: rgb(var(--surface));
+  --error-border: rgb(var(--danger));
+  --error-text: rgb(var(--danger));
+  --warning-bg: rgb(var(--surface));
+  --warning-border: rgb(var(--warning));
+  --warning-text: rgb(var(--warning));
+  --info-bg: rgb(var(--surface));
+  --info-border: rgb(var(--primary));
+  --info-text: rgb(var(--primary));
+  --border-radius: 0.75rem;
+  font-family: var(--font-sans);
+}
+
+[data-sonner-toast] {
+  box-shadow:
+    0 8px 16px -4px rgba(15, 23, 42, 0.1),
+    0 4px 6px -2px rgba(15, 23, 42, 0.06);
+}

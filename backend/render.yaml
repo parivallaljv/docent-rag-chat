@@ -1,0 +1,47 @@
+services:
+  - type: web
+    name: rag-chat-backend
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: SUPABASE_DB_URL
+        sync: false
+      - key: SUPABASE_JWT_SECRET
+        sync: false
+      - key: SUPABASE_JWT_AUD
+        value: authenticated
+      - key: SUPABASE_STORAGE_BUCKET
+        value: documents
+      - key: GEMINI_API_KEY
+        sync: false
+      # Pinned rather than an auto-updating "-latest" alias -- see the
+      # comment on CHAT_MODEL in app/core/config.py for why.
+      - key: CHAT_MODEL
+        value: gemini-3.6-flash
+      - key: CHAT_MODEL_FALLBACKS
+        value: gemini-3.7-flash,gemini-flash-latest
+      - key: EMBEDDING_MODEL
+        value: gemini-embedding-001
+      # Empirically measured real free-tier cap, not the generic ~1500/day
+      # docs figure -- see the comment on GEMINI_DAILY_QUOTA in
+      # app/core/config.py.
+      - key: GEMINI_DAILY_QUOTA
+        value: "50"
+      # Optional cross-vendor fallback (last resort after every Gemini model
+      # above fails/times out) -- get a free key at console.groq.com/keys.
+      # Leave unset to skip it; chat still works via Gemini alone.
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: openai/gpt-oss-120b
+      # Replace with the deployed Next.js frontend's origin (comma-separate
+      # multiple origins, e.g. production + a Vercel preview URL).
+      - key: ALLOWED_ORIGINS
+        value: https://your-frontend.vercel.app

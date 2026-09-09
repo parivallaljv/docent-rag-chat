@@ -1,0 +1,9 @@
+# Editor/tooling metadata (frontend/ and backend/ have their own
+# .gitignore for their respective build artifacts and secrets)
+.vscode/
+.claude/
+.DS_Store
+
+# Supabase CLI's local link/session cache -- project-ref etc., not
+# something to share; migrations/ and config.toml ARE committed.
+supabase/.temp/
