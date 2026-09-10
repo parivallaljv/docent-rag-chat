@@ -4,9 +4,10 @@ A "chat with your documents" RAG (Retrieval-Augmented Generation) application. U
 
 Built end-to-end (auth, storage, ingestion pipeline, vector search, streaming chat, realtime UI) entirely on free tiers, as a portfolio project.
 
-**Live demo:** _add your deployed URLs here once you've completed the deploy steps below_
-- Frontend: `https://<your-app>.vercel.app`
-- Backend API: `https://<your-app>.onrender.com`
+**Live demo:** https://docent-rag-chat.vercel.app
+- Backend API: https://docent-rag-chat.onrender.com
+
+Both are on free tiers, so the backend spins down after ~15 minutes idle — the first request after a while can take up to a minute to wake up (the chat UI shows this explicitly rather than looking frozen).
 
 ## Features
 
