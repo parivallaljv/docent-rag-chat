@@ -1,0 +1,44 @@
+# Local full stack: `docker compose up --build`
+# Postgres+pgvector is local; auth/storage still use your Supabase project,
+# so fill backend/.env (and the NEXT_PUBLIC_* vars below) first.
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: docent
+    ports: ["54329:5432"]
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+      - ./backend/docker/00_auth_stub.sql:/docker-entrypoint-initdb.d/00_auth_stub.sql:ro
+      - ./backend/migrations/001_init.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+      - ./backend/migrations/005_hybrid_search.sql:/docker-entrypoint-initdb.d/05_hybrid.sql:ro
+      - ./backend/migrations/006_chats_insights.sql:/docker-entrypoint-initdb.d/06_chats.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d docent"]
+      interval: 5s
+      retries: 10
+
+  api:
+    build: { context: ., dockerfile: Dockerfile }
+    env_file: backend/.env
+    environment:
+      # Overrides the Supabase DB URL from .env with the local container.
+      SUPABASE_DB_URL: postgresql://postgres:postgres@db:5432/docent
+      ALLOWED_ORIGINS: http://localhost:3000
+    ports: ["8000:8000"]
+    depends_on:
+      db: { condition: service_healthy }
+
+  web:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:-}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}
+        NEXT_PUBLIC_API_URL: http://localhost:8000
+    ports: ["3000:3000"]
+    depends_on: [api]
+
+volumes:
+  dbdata:

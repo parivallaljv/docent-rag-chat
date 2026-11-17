@@ -1,0 +1,46 @@
+name: RAG eval
+# Retrieval-quality gate: fails the PR if a metric drops >0.05 vs the committed
+# baseline (backend/eval/results/baseline.json). Needs repo secret GEMINI_API_KEY.
+on:
+  pull_request:
+    paths:
+      - "backend/app/retrieval/**"
+      - "backend/app/ingestion/**"
+      - "backend/app/llm/**"
+      - "backend/eval/**"
+      - ".github/workflows/eval.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    env:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Skip when no API key (e.g. fork PRs)
+        id: key
+        run: echo "present=$([ -n "$GEMINI_API_KEY" ] && echo yes || echo no)" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-python@v5
+        if: steps.key.outputs.present == 'yes'
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - if: steps.key.outputs.present == 'yes'
+        run: pip install -r requirements.txt
+      - uses: actions/cache@v4
+        if: steps.key.outputs.present == 'yes'
+        with:
+          path: backend/eval/.cache
+          key: eval-cache-${{ hashFiles('backend/app/ingestion/chunker.py', 'backend/app/ingestion/embedder.py', 'backend/eval/dataset.jsonl') }}
+      - if: steps.key.outputs.present == 'yes'
+        run: python -m eval.run_eval --compare eval/results/baseline.json --out eval/results/pr.json
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.key.outputs.present == 'yes'
+        with:
+          name: eval-results
+          path: backend/eval/results/pr.json
