@@ -26,6 +26,8 @@ export interface ChatStreamRequest {
   message: string;
   documentId?: string | null;
   history?: ChatHistoryTurn[];
+  /** When set, the server loads history and persists both turns itself. */
+  chatId?: string | null;
 }
 
 export interface ChatSocketCallbacks {
@@ -244,6 +246,7 @@ class ChatSocket {
           message: request.message,
           document_id: request.documentId ?? null,
           history: request.history ?? [],
+          ...(request.chatId ? { chat_id: request.chatId } : {}),
         })
       );
     };

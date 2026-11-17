@@ -5,13 +5,15 @@ import Link from "next/link";
 import type { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
 import { toast } from "sonner";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
-import type { DocumentRecord, DocumentStatus } from "@/lib/types";
+import type { DocumentRecord, DocumentStatus, InsightKind } from "@/lib/types";
+import InsightsModal from "./InsightsModal";
 
 export default function DocumentList() {
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
+  const [insight, setInsight] = useState<{ doc: DocumentRecord; kind: InsightKind } | null>(null);
 
   useEffect(() => {
     const supabase = getSupabaseBrowserClient();
@@ -195,6 +197,20 @@ export default function DocumentList() {
             <div className="flex shrink-0 items-center gap-3">
               <StatusBadge status={doc.status} />
               {doc.status === "ready" && (
+                <div className="hidden items-center gap-1 sm:flex">
+                  {INSIGHT_ACTIONS.map(({ kind, label }) => (
+                    <button
+                      key={kind}
+                      type="button"
+                      onClick={() => setInsight({ doc, kind })}
+                      className="rounded-lg bg-surface-muted px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-primary/10 hover:text-primary"
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {doc.status === "ready" && (
                 <Link
                   href={`/chat?documentId=${doc.id}`}
                   className="flex items-center gap-1 rounded-lg bg-primary/10 px-3 py-1.5 text-sm font-medium text-primary transition-colors hover:bg-primary hover:text-primary-foreground"
@@ -212,9 +228,23 @@ export default function DocumentList() {
           </li>
         )}
       </ul>
+      {insight && (
+        <InsightsModal
+          documentId={insight.doc.id}
+          filename={insight.doc.filename}
+          kind={insight.kind}
+          onClose={() => setInsight(null)}
+        />
+      )}
     </div>
   );
 }
+
+const INSIGHT_ACTIONS: { kind: InsightKind; label: string }[] = [
+  { kind: "summary", label: "Summary" },
+  { kind: "key_facts", label: "Key facts" },
+  { kind: "quiz", label: "Quiz" },
+];
 
 const STATUS_CONFIG: Record<
   DocumentStatus,

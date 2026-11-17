@@ -2,11 +2,23 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { toast } from "sonner";
-import { getDocuments } from "@/lib/api";
+import {
+  createChat,
+  deleteChat,
+  getChatMessages,
+  getDocuments,
+  listChats,
+} from "@/lib/api";
 import { prewarmChatSocket, sendChatMessage } from "@/lib/ws";
-import type { ChatCitation, ChatHistoryTurn, DocumentRecord } from "@/lib/types";
+import type {
+  ChatCitation,
+  ChatHistoryTurn,
+  ChatSummary,
+  DocumentRecord,
+} from "@/lib/types";
 import MessageStream from "./MessageStream";
 import CitationPanel from "./CitationPanel";
+import ChatList from "./ChatList";
 
 export type MessageStatus =
   | "connecting"
@@ -31,6 +43,8 @@ export interface ChatMessageState {
 interface ChatWindowProps {
   /** Restrict retrieval to a single document, or null to search across all. */
   documentId: string | null;
+  /** Conversation to load on mount (from the `?chat=` query param). */
+  initialChatId?: string | null;
 }
 
 const MESSAGE_MAX_LENGTH = 4000;
@@ -43,7 +57,7 @@ function createId() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-export default function ChatWindow({ documentId }: ChatWindowProps) {
+export default function ChatWindow({ documentId, initialChatId = null }: ChatWindowProps) {
   const [messages, setMessages] = useState<ChatMessageState[]>([]);
   const [draft, setDraft] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
@@ -51,6 +65,10 @@ export default function ChatWindow({ documentId }: ChatWindowProps) {
     null
   );
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
+
+  const [chats, setChats] = useState<ChatSummary[]>([]);
+  const [chatId, setChatId] = useState<string | null>(null);
+  const [isLoadingChat, setIsLoadingChat] = useState(false);
 
   const stopHandleRef = useRef<{ stop: () => void } | null>(null);
 
@@ -80,6 +98,74 @@ export default function ChatWindow({ documentId }: ChatWindowProps) {
     };
   }, []);
 
+  function refreshChats() {
+    listChats()
+      .then(setChats)
+      .catch(() => {
+        // Non-fatal: the conversation list just stays as it was.
+      });
+  }
+
+  function syncUrl(id: string | null) {
+    const params = new URLSearchParams();
+    if (documentId) params.set("documentId", documentId);
+    if (id) params.set("chat", id);
+    const qs = params.toString();
+    window.history.replaceState(null, "", qs ? `/chat?${qs}` : "/chat");
+  }
+
+  async function loadChat(id: string) {
+    setIsLoadingChat(true);
+    try {
+      const stored = await getChatMessages(id);
+      setMessages(
+        stored.map((m) => ({
+          id: m.id,
+          role: m.role,
+          content: m.content,
+          status: m.role === "assistant" ? "done" : undefined,
+          citations: m.citations ?? undefined,
+        }))
+      );
+      const lastWithCitations = [...stored].reverse().find((m) => m.citations?.length);
+      setActiveCitations(lastWithCitations?.citations ?? null);
+      setChatId(id);
+      syncUrl(id);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't load that conversation.");
+      if (id === initialChatId) syncUrl(null);
+    } finally {
+      setIsLoadingChat(false);
+    }
+  }
+
+  function handleNewChat() {
+    if (isStreaming) return;
+    setChatId(null);
+    setMessages([]);
+    setActiveCitations(null);
+    syncUrl(null);
+  }
+
+  async function handleDeleteChat(id: string) {
+    try {
+      await deleteChat(id);
+      setChats((prev) => prev.filter((chat) => chat.id !== id));
+      if (id === chatId) handleNewChat();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't delete the conversation.");
+    }
+  }
+
+  useEffect(() => {
+    listChats()
+      .then(setChats)
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (initialChatId) void loadChat(initialChatId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   function updateMessage(
     id: string,
     updater: (message: ChatMessageState) => ChatMessageState
@@ -93,10 +179,10 @@ export default function ChatWindow({ documentId }: ChatWindowProps) {
     setActiveCitations(message.citations ?? []);
   }
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const text = draft.trim();
-    if (!text || isStreaming) return;
+    if (!text || isStreaming || isLoadingChat) return;
 
     const history: ChatHistoryTurn[] = messages
       .filter((message) => message.content.trim().length > 0)
@@ -119,8 +205,26 @@ export default function ChatWindow({ documentId }: ChatWindowProps) {
     setDraft("");
     setIsStreaming(true);
 
+    // Lazily create the conversation on the first message. If that fails,
+    // fall back to a stateless turn that still sends client-side history.
+    let activeChatId = chatId;
+    if (!activeChatId) {
+      try {
+        const created = await createChat();
+        activeChatId = created.id;
+        setChatId(created.id);
+        syncUrl(created.id);
+      } catch (err) {
+        toast.error(
+          err instanceof Error ? err.message : "Couldn't save this conversation."
+        );
+      }
+    }
+
     stopHandleRef.current = sendChatMessage(
-      { message: text, documentId, history },
+      activeChatId
+        ? { message: text, documentId, chatId: activeChatId }
+        : { message: text, documentId, history },
       {
         onWaking: () => {
           updateMessage(assistantId, (m) => ({ ...m, status: "waking" }));
@@ -177,6 +281,7 @@ export default function ChatWindow({ documentId }: ChatWindowProps) {
         onTurnEnd: () => {
           setIsStreaming(false);
           stopHandleRef.current = null;
+          refreshChats();
         },
       }
     );
@@ -209,6 +314,15 @@ export default function ChatWindow({ documentId }: ChatWindowProps) {
             </a>
           </div>
         )}
+
+        <ChatList
+          chats={chats}
+          activeId={chatId}
+          disabled={isStreaming || isLoadingChat}
+          onSelect={(id) => void loadChat(id)}
+          onNew={handleNewChat}
+          onDelete={(id) => void handleDeleteChat(id)}
+        />
 
         <MessageStream messages={messages} onShowCitations={handleShowCitations} />
 
