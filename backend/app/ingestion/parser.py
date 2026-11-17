@@ -1,13 +1,14 @@
 """Page-level text extraction from raw PDF bytes."""
+
 from __future__ import annotations
 
 import io
-from typing import Iterator, Tuple
+from collections.abc import Iterator
 
 from pypdf import PdfReader
 
 
-def extract_pages(pdf_bytes: bytes) -> Iterator[Tuple[int, str]]:
+def extract_pages(pdf_bytes: bytes) -> Iterator[tuple[int, str]]:
     """Yield (page_number, page_text) tuples for each page in the PDF.
     page_number is 1-indexed. Pages with no extractable text (e.g. a scanned
     image page with no OCR layer) yield an empty string rather than being

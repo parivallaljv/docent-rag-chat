@@ -7,6 +7,7 @@ turned out to be far lower than the ~1500/day generic docs suggested, and
 this guard is what stands between that and a raw, unfriendly upstream 429
 reaching the user.
 """
+
 from __future__ import annotations
 
 from datetime import date

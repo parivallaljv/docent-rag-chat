@@ -11,11 +11,12 @@ tokens, but for English prose it's a close enough proxy to size chunks
 sensibly without adding a tokenizer dependency. Swap in tiktoken (or a call
 to Gemini's count_tokens API) here if exact counts are ever needed.
 """
+
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable, List, Tuple
 
 _WORD_RE = re.compile(r"\S+")
 _PARAGRAPH_SPLIT_RE = re.compile(r"\n\s*\n+")
@@ -52,23 +53,23 @@ class _Unit:
     text: str
 
 
-def _split_paragraphs(page_number: int, text: str) -> List[_Unit]:
+def _split_paragraphs(page_number: int, text: str) -> list[_Unit]:
     paragraphs = [p.strip() for p in _PARAGRAPH_SPLIT_RE.split(text) if p.strip()]
     return [_Unit(page_number, p) for p in paragraphs]
 
 
-def _split_sentences(unit: _Unit) -> List[_Unit]:
+def _split_sentences(unit: _Unit) -> list[_Unit]:
     sentences = [s.strip() for s in _SENTENCE_SPLIT_RE.split(unit.text) if s.strip()]
     if len(sentences) <= 1:
         return [unit]
     return [_Unit(unit.page_number, s) for s in sentences]
 
 
-def _hard_split(unit: _Unit, hard_char_limit: int) -> List[_Unit]:
+def _hard_split(unit: _Unit, hard_char_limit: int) -> list[_Unit]:
     text = unit.text
     if len(text) <= hard_char_limit:
         return [unit]
-    pieces: List[_Unit] = []
+    pieces: list[_Unit] = []
     for start in range(0, len(text), hard_char_limit):
         piece = text[start : start + hard_char_limit].strip()
         if piece:
@@ -77,10 +78,11 @@ def _hard_split(unit: _Unit, hard_char_limit: int) -> List[_Unit]:
 
 
 def _explode_oversized_units(
-    units: List[_Unit], target_tokens: int, hard_char_limit: int
-) -> List[_Unit]:
+    units: list[_Unit], target_tokens: int, hard_char_limit: int
+) -> list[_Unit]:
     """Recursively cascade any unit larger than target_tokens down through
     paragraph -> sentence -> hard character splitting."""
+
     def _fits(text: str) -> bool:
         # Token estimate is a whitespace-word count, so a single pathological
         # "word" with no whitespace at all (a long URL/base64 blob, garbled
@@ -88,7 +90,7 @@ def _explode_oversized_units(
         # get split. Guard with an explicit character cap too.
         return approx_token_count(text) <= target_tokens and len(text) <= hard_char_limit
 
-    result: List[_Unit] = []
+    result: list[_Unit] = []
     for unit in units:
         if _fits(unit.text):
             result.append(unit)
@@ -116,11 +118,11 @@ def _take_overlap_tail(text: str, overlap_tokens: int) -> str:
 
 
 def chunk_pages(
-    pages: Iterable[Tuple[int, str]],
+    pages: Iterable[tuple[int, str]],
     target_tokens: int = DEFAULT_TARGET_TOKENS,
     overlap_ratio: float = DEFAULT_OVERLAP_RATIO,
     hard_char_limit: int = DEFAULT_HARD_CHAR_LIMIT,
-) -> List[TextChunk]:
+) -> list[TextChunk]:
     """Chunk page-tagged text into ~target_tokens-sized chunks with overlap.
 
     `pages` is an iterable of (page_number, page_text) tuples, e.g. as
@@ -132,7 +134,7 @@ def chunk_pages(
     """
     overlap_tokens = max(0, round(target_tokens * overlap_ratio))
 
-    units: List[_Unit] = []
+    units: list[_Unit] = []
     for page_number, page_text in pages:
         if not page_text or not page_text.strip():
             continue
@@ -143,8 +145,8 @@ def chunk_pages(
 
     units = _explode_oversized_units(units, target_tokens, hard_char_limit)
 
-    chunks: List[TextChunk] = []
-    current_units: List[_Unit] = []
+    chunks: list[TextChunk] = []
+    current_units: list[_Unit] = []
     current_tokens = 0
     current_chars = 0
     overlap_prefix = ""

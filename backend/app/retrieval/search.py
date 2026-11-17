@@ -1,16 +1,23 @@
 """Embeds a query string and fetches candidate chunks from Postgres via
 pgvector kNN search, scoped to a user (and optionally a single document).
 """
+
 from __future__ import annotations
 
+import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, List, Optional, Sequence
+from typing import Any
 from uuid import UUID
 
 import asyncpg
 
+from ..core.config import settings
 from ..db import queries
 from ..ingestion.embedder import embed_query
+from .fusion import reciprocal_rank_fusion
+from .rerank import dot
+from .rewrite import rewrite_query
 
 # How many recent chat turns to fold into the embedded query text. A short
 # follow-up like "What year did that happen?" carries almost no retrievable
@@ -23,6 +30,8 @@ from ..ingestion.embedder import embed_query
 # round-trip per follow-up, doubling quota usage for every multi-turn
 # conversation), at the cost of some signal dilution on longer histories --
 # hence keeping this window short.
+logger = logging.getLogger(__name__)
+
 _HISTORY_TURNS_FOR_QUERY_EXPANSION = 4
 
 
@@ -34,7 +43,7 @@ class Candidate:
     page_number: int
     chunk_index: int
     content: str
-    embedding: List[float]
+    embedding: list[float]
     similarity: float
 
 
@@ -53,33 +62,61 @@ async def search(
     *,
     user_id: Any,
     query_text: str,
-    document_id: Optional[UUID] = None,
+    document_id: UUID | None = None,
     top_n: int = 20,
-    history: Optional[Sequence[Any]] = None,
-) -> List[Candidate]:
+    history: Sequence[Any] | None = None,
+) -> list[Candidate]:
     """Embed `query_text` (expanded with recent chat `history`, if given, so
     reference-heavy follow-ups retain their topical anchor) and return the
     top_n most similar chunks for this user (optionally scoped to a single
     document), as raw candidates ready for MMR reranking."""
-    expanded_query = _expand_query_with_history(query_text, history or [])
+    rewritten = await rewrite_query(query_text, history or [])
+    expanded_query = rewritten or _expand_query_with_history(query_text, history or [])
     query_embedding = await embed_query(expanded_query)
-    rows = await queries.search_chunks(
+    dense_rows = await queries.search_chunks(
         pool,
         user_id=user_id,
         query_embedding=query_embedding,
         document_id=document_id,
         limit=top_n,
     )
-    return [
-        Candidate(
-            chunk_id=row["id"],
-            document_id=row["document_id"],
-            filename=row["filename"],
-            page_number=row["page_number"],
-            chunk_index=row["chunk_index"],
-            content=row["content"],
-            embedding=row["embedding"].to_list(),
-            similarity=float(row["similarity"]),
+    rows = list(dense_rows)
+    if settings.HYBRID_SEARCH:
+        try:
+            keyword_rows = await queries.keyword_search_chunks(
+                pool,
+                user_id=user_id,
+                query_text=rewritten or query_text,
+                document_id=document_id,
+                limit=top_n,
+            )
+        except asyncpg.UndefinedColumnError:
+            # Migration 005 not applied yet: degrade to dense-only, don't fail chat.
+            logger.warning("chunks.content_tsv missing; apply migration 005. Using dense only.")
+            keyword_rows = []
+        by_id = {r["id"]: r for r in [*dense_rows, *keyword_rows]}
+        fused = reciprocal_rank_fusion(
+            [[r["id"] for r in dense_rows], [r["id"] for r in keyword_rows]],
+            key=lambda i: i,
+            k=settings.RRF_K,
         )
-        for row in rows
-    ]
+        rows = [by_id[i] for i in fused[:top_n]]
+
+    candidates = []
+    for row in rows:
+        embedding = row["embedding"].to_list()
+        candidates.append(
+            Candidate(
+                chunk_id=row["id"],
+                document_id=row["document_id"],
+                filename=row["filename"],
+                page_number=row["page_number"],
+                chunk_index=row["chunk_index"],
+                content=row["content"],
+                embedding=embedding,
+                # True cosine for every candidate (keyword-only hits carry no
+                # dense score), so the relevance guardrail stays meaningful.
+                similarity=dot(embedding, query_embedding),
+            )
+        )
+    return candidates

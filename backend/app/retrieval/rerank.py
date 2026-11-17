@@ -7,10 +7,12 @@ already computed during the kNN search in db.queries.search_chunks) rather
 than recomputed here, so this module never needs the query embedding itself
 -- only pairwise similarity *between* candidates, for the diversity term.
 """
+
 from __future__ import annotations
 
 import math
-from typing import Callable, List, Sequence, TypeVar
+from collections.abc import Callable, Sequence
+from typing import TypeVar
 
 Vector = Sequence[float]
 T = TypeVar("T")
@@ -32,12 +34,12 @@ def cosine_similarity(a: Vector, b: Vector) -> float:
 
 
 def mmr_rerank(
-    candidates: List[T],
+    candidates: list[T],
     embedding_fn: Callable[[T], Vector],
     relevance_fn: Callable[[T], float],
     top_k: int = 5,
     lambda_mult: float = 0.5,
-) -> List[T]:
+) -> list[T]:
     """Greedily select up to top_k candidates, at each step maximizing:
 
         lambda_mult * relevance(c) - (1 - lambda_mult) * max(sim(c, s) for s in selected)
@@ -53,11 +55,12 @@ def mmr_rerank(
     relevance = {id(c): relevance_fn(c) for c in remaining}
     embeddings = {id(c): embedding_fn(c) for c in remaining}
 
-    selected: List[T] = []
+    selected: list[T] = []
     while remaining and len(selected) < top_k:
         if not selected:
             best = max(remaining, key=lambda c: relevance[id(c)])
         else:
+
             def mmr_score(c: T) -> float:
                 diversity_penalty = max(
                     cosine_similarity(embeddings[id(c)], embeddings[id(s)]) for s in selected
