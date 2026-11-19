@@ -14,7 +14,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH" \
     PORT=8000
-RUN useradd --system --uid 10001 --no-create-home app
+RUN pip uninstall -y setuptools wheel && useradd --system --uid 10001 --no-create-home app
 WORKDIR /app
 COPY --from=builder /opt/venv /opt/venv
 COPY --chown=app:app app ./app
