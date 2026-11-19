@@ -5,6 +5,7 @@ import Link from "next/link";
 import type { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
 import { toast } from "sonner";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
+import { retryDocument } from "@/lib/api";
 import type { DocumentRecord, DocumentStatus, InsightKind } from "@/lib/types";
 import InsightsModal from "./InsightsModal";
 
@@ -14,6 +15,15 @@ export default function DocumentList() {
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   const [insight, setInsight] = useState<{ doc: DocumentRecord; kind: InsightKind } | null>(null);
+
+  async function handleRetry(id: string) {
+    try {
+      const updated = await retryDocument(id);
+      setDocuments((prev) => prev.map((doc) => (doc.id === id ? updated : doc)));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't retry this document.");
+    }
+  }
 
   useEffect(() => {
     const supabase = getSupabaseBrowserClient();
@@ -209,6 +219,15 @@ export default function DocumentList() {
                     </button>
                   ))}
                 </div>
+              )}
+              {doc.status === "failed" && (
+                <button
+                  type="button"
+                  onClick={() => handleRetry(doc.id)}
+                  className="rounded-lg bg-surface-muted px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-primary/10 hover:text-primary"
+                >
+                  Retry
+                </button>
               )}
               {doc.status === "ready" && (
                 <Link

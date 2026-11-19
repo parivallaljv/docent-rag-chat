@@ -100,6 +100,17 @@ export async function getDocuments(): Promise<DocumentRecord[]> {
   return res.json();
 }
 
+export async function deleteDocument(id: string): Promise<void> {
+  await apiFetch(`/documents/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export async function retryDocument(id: string): Promise<DocumentRecord> {
+  const res = await apiFetch(`/documents/${encodeURIComponent(id)}/retry`, {
+    method: "POST",
+  });
+  return res.json();
+}
+
 export async function listChats(): Promise<ChatSummary[]> {
   const res = await apiFetch("/chats", { method: "GET" });
   return res.json();

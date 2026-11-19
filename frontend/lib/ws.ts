@@ -70,6 +70,7 @@ interface PendingTurn {
 
 const WAKE_THRESHOLD_MS = 2000;
 const MAX_RECONNECT_DELAY_MS = 30000;
+const PING_INTERVAL_MS = 25000;
 
 class ChatSocket {
   private ws: WebSocket | null = null;
@@ -109,8 +110,12 @@ class ChatSocket {
       const ws = new WebSocket(wsUrl);
       this.ws = ws;
       let settled = false;
+      let pingTimer: ReturnType<typeof setInterval> | null = null;
 
       ws.onopen = () => {
+        pingTimer = setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "ping" }));
+        }, PING_INTERVAL_MS);
         ws.send(JSON.stringify({ type: "auth", token }));
       };
 
@@ -121,6 +126,8 @@ class ChatSocket {
         } catch {
           return;
         }
+
+        if (data.type === "pong") return;
 
         if (data.type === "auth_ok") {
           this.status = "ready";
@@ -145,6 +152,7 @@ class ChatSocket {
       };
 
       ws.onclose = () => {
+        if (pingTimer) clearInterval(pingTimer);
         this.ws = null;
         this.status = "closed";
         if (!settled) {
