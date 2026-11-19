@@ -9,7 +9,7 @@ WORKDIR /build
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 COPY backend/requirements.txt .
-RUN pip install -r requirements.txt
+RUN pip install --upgrade "setuptools>=78.1.1" "wheel>=0.46.2" && pip install -r requirements.txt
 
 FROM python:3.11-slim-bookworm AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 \
