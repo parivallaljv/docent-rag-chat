@@ -21,7 +21,7 @@ from ..db.client import get_pool
 from .chunker import chunk_pages
 from .embedder import embed_chunks
 from .ocr import OcrUnavailable, ocr_pdf
-from .parser import extract_pages
+from .parser import extract_document_pages
 
 logger = logging.getLogger(__name__)
 
@@ -100,16 +100,16 @@ async def run_ingestion_pipeline(document_id: Any, user_id: Any, storage_path: s
             return
 
         try:
-            pages = list(extract_pages(pdf_bytes))
+            pages = extract_document_pages(storage_path, pdf_bytes)
         except Exception:
-            logger.exception("Failed to parse PDF for document %s", document_id)
+            logger.exception("Failed to parse document %s", document_id)
             await queries.update_document_status(
                 pool,
                 document_id=document_id,
                 status="failed",
                 error_message=(
-                    "This file couldn't be read as a PDF. It may be corrupted "
-                    "or password-protected."
+                    "This file couldn't be read. It may be corrupted, "
+                    "password-protected or in an unsupported format."
                 ),
             )
             return
@@ -120,7 +120,7 @@ async def run_ingestion_pipeline(document_id: Any, user_id: Any, storage_path: s
             overlap_ratio=settings.CHUNK_OVERLAP_RATIO,
         )
 
-        if not text_chunks:
+        if not text_chunks and storage_path.lower().endswith(".pdf"):
             # Scanned PDF? Try OCR before giving up.
             try:
                 logger.info("No text layer in document %s; trying OCR", document_id)
@@ -138,7 +138,7 @@ async def run_ingestion_pipeline(document_id: Any, user_id: Any, storage_path: s
                 pool,
                 document_id=document_id,
                 status="failed",
-                error_message="No extractable text was found in this PDF.",
+                error_message="No extractable text was found in this file.",
             )
             return
 

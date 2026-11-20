@@ -141,7 +141,7 @@ export default function DocumentList() {
         </div>
         <p className="mt-4 text-base font-semibold text-foreground">No documents yet</p>
         <p className="mx-auto mt-1 max-w-sm text-sm text-muted">
-          Upload your first PDF above to get started.
+          Upload your first document above to get started.
         </p>
       </div>
     );

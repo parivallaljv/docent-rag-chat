@@ -96,7 +96,7 @@ def _patch_pipeline(monkeypatch, pages, ocr_pages=None, ocr_error=False):
     monkeypatch.setattr(pipeline.queries, "update_document_status", status)
     monkeypatch.setattr(pipeline.queries, "replace_chunks_and_mark_ready", replace)
     monkeypatch.setattr(pipeline, "download_from_storage", lambda p: b"%PDF")
-    monkeypatch.setattr(pipeline, "extract_pages", lambda b: iter(pages))
+    monkeypatch.setattr(pipeline, "extract_document_pages", lambda name, b: list(pages))
     monkeypatch.setattr(pipeline, "embed_chunks", embed)
     monkeypatch.setattr(pipeline, "ocr_pdf", fake_ocr)
     return rec

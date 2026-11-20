@@ -17,6 +17,7 @@ from ..core.auth import get_current_user_id
 from ..db import queries
 from ..db.client import get_pool
 from ..db.models import DocumentCreateRequest, DocumentResponse
+from ..ingestion.parser import is_supported
 from ..ingestion.pipeline import delete_from_storage, run_ingestion_pipeline
 
 logger = logging.getLogger(__name__)
@@ -41,8 +42,11 @@ async def create_document(
         )
     # The frontend already checks this before uploading, but a client is
     # never trusted to have actually done so.
-    if not payload.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files are supported.")
+    if not is_supported(payload.filename):
+        raise HTTPException(
+            status_code=400,
+            detail="Supported files: PDF, DOCX, Markdown, TXT, HTML.",
+        )
 
     pool = get_pool()
     try:

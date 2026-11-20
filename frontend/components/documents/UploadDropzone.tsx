@@ -42,8 +42,8 @@ export default function UploadDropzone() {
       ...prev,
     ]);
 
-    if (file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")) {
-      const message = "Only PDF files are supported.";
+    if (!/\.(pdf|docx|md|markdown|txt|html?)$/i.test(file.name)) {
+      const message = "Supported files: PDF, DOCX, Markdown, TXT, HTML.";
       updateItem(id, { status: "error", error: message });
       toast.error(`${file.name}: ${message}`);
       return;
@@ -76,7 +76,7 @@ export default function UploadDropzone() {
         .from(STORAGE_BUCKET)
         .upload(storagePath, file, {
           upsert: true,
-          contentType: "application/pdf",
+          contentType: file.type || "application/octet-stream",
         });
 
       if (uploadError) {
@@ -154,13 +154,13 @@ export default function UploadDropzone() {
           </span>
         </div>
         <p className="mt-4 text-base font-medium text-foreground">
-          Drag and drop a PDF here, or{" "}
+          Drag and drop a document here, or{" "}
           <span className="font-semibold text-primary underline decoration-primary/40 underline-offset-4">
             click to browse
           </span>
         </p>
         <p className="mt-1 text-sm text-muted">
-          Up to 25 MB per file · PDF documents only
+          Up to 25 MB per file · PDF, DOCX, MD, TXT, HTML
         </p>
         <div className="mt-4 flex items-center gap-2">
           <span className="inline-flex items-center gap-1.5 rounded-full bg-surface-muted px-3 py-1 text-xs font-medium text-muted">
@@ -171,7 +171,7 @@ export default function UploadDropzone() {
         <input
           ref={inputRef}
           type="file"
-          accept="application/pdf,.pdf"
+          accept=".pdf,.docx,.md,.markdown,.txt,.html,.htm"
           multiple
           className="hidden"
           onChange={handleInputChange}
