@@ -32,23 +32,37 @@ through Next.js), so Vercel's serverless timeout was never a factor for
 either transport. This is a persistent-connection preference (no
 reconnect-per-turn, room for future bidirectional features), not a bug fix.
 """
+
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
-from typing import Any, AsyncIterator, Optional, Tuple
+import time
+from collections.abc import AsyncIterator
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 
-from ..core.auth import TokenVerificationError, verify_token
+from ..core.auth import TokenVerificationError, verify_token_claims
 from ..core.config import settings
-from ..core.rate_limit import enforce_gemini_quota, is_quota_exhausted_error
+from ..core.logging import new_request_id, request_id_var
+from ..core.metrics import RATE_LIMITED, Trace
+from ..core.rate_limit import (
+    check_user_rate_limit,
+    enforce_gemini_quota,
+    is_quota_exhausted_error,
+)
+from ..db import queries
 from ..db.client import get_pool
 from ..db.models import ChatMessage, ChatRequest
+from ..ingestion.chunker import approx_token_count
 from ..llm.gemini_client import stream_chat
+from ..retrieval import agent as agent_mod
 from ..retrieval import prompt as prompt_mod
 from ..retrieval import search as search_mod
+from ..retrieval.citations import reconcile_citations, select_cited
 from ..retrieval.rerank import mmr_rerank
 
 logger = logging.getLogger(__name__)
@@ -58,29 +72,52 @@ router = APIRouter(tags=["chat"])
 _AUTH_TIMEOUT_SECONDS = 10.0
 
 
-async def _run_chat_turn(user_id: str, payload: ChatRequest) -> AsyncIterator[Tuple[str, dict]]:
+async def _run_chat_turn_inner(
+    user_id: str, payload: ChatRequest, trace: Trace
+) -> AsyncIterator[tuple[str, dict]]:
     """Transport-agnostic retrieval + generation pipeline for one chat turn.
     Yields (event_type, data) pairs; the WebSocket route below is the only
     caller and handles all framing/turn_id/transport concerns itself."""
     pool = get_pool()
 
     try:
-        candidates = await search_mod.search(
-            pool,
-            user_id=user_id,
-            query_text=payload.message,
-            document_id=payload.document_id,
-            top_n=settings.RETRIEVAL_TOP_N,
-            history=payload.history,
-        )
+        _t = time.perf_counter()
 
-        ranked = mmr_rerank(
-            candidates,
-            embedding_fn=lambda c: c.embedding,
-            relevance_fn=lambda c: c.similarity,
-            top_k=settings.RERANK_TOP_K,
-            lambda_mult=settings.MMR_LAMBDA,
-        )
+        async def search_one(query: str, is_original: bool) -> list:
+            return await search_mod.search(
+                pool,
+                user_id=user_id,
+                query_text=query,
+                document_id=payload.document_id,
+                top_n=settings.RETRIEVAL_TOP_N,
+                # Only the user's own wording needs history context; planner
+                # queries are already self-contained.
+                history=payload.history if is_original else None,
+            )
+
+        if settings.AGENTIC_SEARCH:
+            agent = await agent_mod.agentic_retrieve(search_one, payload.message, payload.history)
+            candidates = agent.candidates
+            trace.attrs["agent_queries"] = agent.queries
+            trace.attrs["agent_rounds"] = agent.rounds
+            if agent.error:
+                trace.attrs["agent_error"] = agent.error
+        else:
+            candidates = await search_one(payload.message, True)
+        trace.mark("retrieve", time.perf_counter() - _t)
+        _t = time.perf_counter()
+
+        if settings.MMR_LAMBDA >= 1.0:
+            # Pure relevance: keep search()'s order (cosine, or RRF when hybrid).
+            ranked = candidates[: settings.RERANK_TOP_K]
+        else:
+            ranked = mmr_rerank(
+                candidates,
+                embedding_fn=lambda c: c.embedding,
+                relevance_fn=lambda c: c.similarity,
+                top_k=settings.RERANK_TOP_K,
+                lambda_mult=settings.MMR_LAMBDA,
+            )
 
         history = [prompt_mod.ChatTurn(role=h.role, content=h.content) for h in payload.history]
         assembled = prompt_mod.build_prompt(
@@ -91,6 +128,7 @@ async def _run_chat_turn(user_id: str, payload: ChatRequest) -> AsyncIterator[Tu
             max_prompt_tokens=settings.MAX_PROMPT_TOKENS,
             history_turns=settings.HISTORY_TURNS,
         )
+        trace.mark("rank_prompt", time.perf_counter() - _t)
     except asyncio.CancelledError:
         raise
     except Exception:
@@ -108,12 +146,19 @@ async def _run_chat_turn(user_id: str, payload: ChatRequest) -> AsyncIterator[Tu
         yield ("no_context", {"message": prompt_mod.NO_CONTEXT_MESSAGE})
         return
 
+    trace.attrs["prompt_tokens_approx"] = approx_token_count(assembled.prompt)
+    trace.attrs["chunks"] = len(assembled.citations)
+    answer_parts: list[str] = []
+    _gen = time.perf_counter()
     try:
         async for token in stream_chat(
             prompt=assembled.prompt,
             system_instruction=assembled.system_instruction,
             model=settings.CHAT_MODEL,
         ):
+            if not answer_parts:
+                trace.mark("ttft", time.perf_counter() - _gen)
+            answer_parts.append(token)
             yield ("token", {"content": token})
     except TimeoutError:
         logger.exception("Gemini generation timed out mid-stream")
@@ -140,23 +185,113 @@ async def _run_chat_turn(user_id: str, payload: ChatRequest) -> AsyncIterator[Tu
             )
             return
         logger.exception("Gemini generation failed mid-stream")
-        yield ("error", {"message": "The AI is temporarily overloaded. Please try again in a moment."})
+        yield (
+            "error",
+            {"message": "The AI is temporarily overloaded. Please try again in a moment."},
+        )
         return
 
+    trace.mark("generate", time.perf_counter() - _gen)
+    trace.attrs["completion_tokens_approx"] = approx_token_count("".join(answer_parts))
+
+    # Cite only the excerpts the model actually referenced; surface bad numbers.
+    valid, invalid = reconcile_citations(
+        "".join(answer_parts), [c.marker for c in assembled.citations]
+    )
+    if invalid:
+        logger.warning("Model cited non-existent excerpt numbers: %s", invalid)
     citations = [
         {
             # Field names match the frontend's ChatCitation type exactly
             # (lib/types.ts) -- id/page/snippet, not chunk_id/page_number/content.
             "id": str(c.chunk_id),
+            "marker": c.marker,
             "document_id": str(c.document_id),
             "filename": c.filename,
             "page": c.page_number,
             "snippet": c.content[:280].strip() + ("…" if len(c.content) > 280 else ""),
             "similarity": round(c.similarity, 4),
         }
-        for c in assembled.citations
+        for c in select_cited(assembled.citations, valid)
     ]
-    yield ("citations", {"citations": citations})
+    payload_out: dict = {"citations": citations}
+    if not valid:
+        payload_out["warning"] = "no_valid_citations"
+    if invalid:
+        payload_out["invalid_markers"] = invalid
+    yield ("citations", payload_out)
+
+
+_TERMINAL_OUTCOMES = {
+    "citations": "ok",
+    "no_context": "no_context",
+    "error": "error",
+    "quota_exceeded": "quota_exceeded",
+}
+
+
+async def _persist(user_id: str, chat_id: Any, role: str, content: str, citations=None) -> None:
+    """Best-effort save: a DB hiccup must never break a live answer."""
+    try:
+        await queries.add_message(
+            get_pool(),
+            user_id=user_id,
+            chat_id=chat_id,
+            role=role,
+            content=content,
+            citations=citations,
+        )
+    except Exception:
+        logger.exception("Failed to persist chat message")
+
+
+async def _run_chat_turn(user_id: str, payload: ChatRequest) -> AsyncIterator[tuple[str, dict]]:
+    """Instrumented wrapper: correlation id, server-side history + persistence
+    when a chat_id is given, stage timings, one `chat_turn` log line + metrics
+    per turn, whatever way the turn ends."""
+    request_id_var.set(new_request_id())
+    trace = Trace(user=str(user_id)[:8], history_turns=len(payload.history))
+    outcome = "cancelled"
+    answer: list[str] = []
+    try:
+        if payload.chat_id is not None:
+            # Server is the source of truth: client history is ignored, so it
+            # can't be forged, and ownership is checked before anything is read.
+            pool = get_pool()
+            if await queries.get_chat(pool, user_id=user_id, chat_id=payload.chat_id) is None:
+                outcome = "error"
+                yield ("error", {"message": "That conversation no longer exists."})
+                return
+            rows = await queries.recent_messages(
+                pool, user_id=user_id, chat_id=payload.chat_id, limit=settings.HISTORY_TURNS * 2
+            )
+            payload = payload.model_copy(
+                update={
+                    "history": [ChatMessage(role=r["role"], content=r["content"]) for r in rows]
+                }
+            )
+            trace.attrs["history_turns"] = len(payload.history)
+            await _persist(user_id, payload.chat_id, "user", payload.message)
+
+        async for event, data in _run_chat_turn_inner(user_id, payload, trace):
+            outcome = _TERMINAL_OUTCOMES.get(event, outcome)
+            if event == "token":
+                answer.append(data["content"])
+            elif payload.chat_id is not None and event == "citations":
+                await _persist(
+                    user_id, payload.chat_id, "assistant", "".join(answer), data["citations"]
+                )
+            elif payload.chat_id is not None and event == "no_context":
+                await _persist(user_id, payload.chat_id, "assistant", data["message"], [])
+            yield event, data
+    except asyncio.CancelledError:
+        outcome = "cancelled"
+        raise
+    except Exception:
+        outcome = "error"
+        raise
+    finally:
+        trace.finish(outcome)
 
 
 def _parse_chat_request(msg: dict) -> ChatRequest:
@@ -164,6 +299,7 @@ def _parse_chat_request(msg: dict) -> ChatRequest:
     return ChatRequest(
         message=msg.get("message", ""),
         document_id=msg.get("document_id"),
+        chat_id=msg.get("chat_id"),
         history=[ChatMessage(**h) for h in history_raw],
     )
 
@@ -184,16 +320,22 @@ async def chat_ws(websocket: WebSocket) -> None:
 
     try:
         auth_msg = await asyncio.wait_for(websocket.receive_json(), timeout=_AUTH_TIMEOUT_SECONDS)
-    except (asyncio.TimeoutError, WebSocketDisconnect, ValueError):
+    except (TimeoutError, WebSocketDisconnect, ValueError):
         await websocket.close(code=1008, reason="Expected an auth message")
         return
 
-    if not isinstance(auth_msg, dict) or auth_msg.get("type") != "auth" or not auth_msg.get("token"):
+    if (
+        not isinstance(auth_msg, dict)
+        or auth_msg.get("type") != "auth"
+        or not auth_msg.get("token")
+    ):
         await websocket.close(code=1008, reason="Expected {type: 'auth', token: ...} first")
         return
 
     try:
-        user_id = verify_token(auth_msg["token"])
+        claims = verify_token_claims(auth_msg["token"])
+        user_id = claims["sub"]
+        token_exp = claims.get("exp")
     except TokenVerificationError as exc:
         await websocket.send_json({"type": "auth_error", "message": str(exc)})
         await websocket.close(code=1008)
@@ -201,7 +343,8 @@ async def chat_ws(websocket: WebSocket) -> None:
 
     await websocket.send_json({"type": "auth_ok"})
 
-    current_task: Optional[asyncio.Task] = None
+    current_task: asyncio.Task | None = None
+    expiry_watch: asyncio.Task | None = None
     # Every websocket.send_json() call -- both the main loop's and
     # run_turn's -- goes through this lock. Turns run as a background task
     # (see the "don't inline-await" note below) so the main loop keeps
@@ -237,6 +380,19 @@ async def chat_ws(websocket: WebSocket) -> None:
             # "Task exception was never retrieved" log line.
             logger.error("Unhandled exception in chat turn", exc_info=exc)
 
+    async def _close_at_expiry() -> None:
+        # The JWT is only checked at connect, so a socket could outlive it. Close
+        # (code 1008) once it expires -- after any in-flight turn finishes -- and
+        # the client reconnects with a freshly refreshed token.
+        await asyncio.sleep(max(0.0, float(token_exp) - time.time()))
+        while current_task is not None and not current_task.done():
+            await asyncio.sleep(1)
+        with contextlib.suppress(Exception):
+            await websocket.close(code=1008, reason="Token expired")
+
+    if token_exp is not None:
+        expiry_watch = asyncio.create_task(_close_at_expiry())
+
     try:
         while True:
             try:
@@ -249,6 +405,10 @@ async def chat_ws(websocket: WebSocket) -> None:
                 continue
 
             msg_type = msg.get("type")
+
+            if msg_type == "ping":
+                await send({"type": "pong"})
+                continue
 
             if msg_type == "stop":
                 if current_task is not None and not current_task.done():
@@ -279,7 +439,9 @@ async def chat_ws(websocket: WebSocket) -> None:
             try:
                 payload = _parse_chat_request(msg)
             except ValidationError as exc:
-                await send({"type": "error", "turn_id": turn_id, "message": f"Invalid message: {exc}"})
+                await send(
+                    {"type": "error", "turn_id": turn_id, "message": f"Invalid message: {exc}"}
+                )
                 continue
 
             # Quota can no longer be enforced as a one-shot dependency before
@@ -287,6 +449,17 @@ async def chat_ws(websocket: WebSocket) -> None:
             # gate the way an HTTP request has) -- it's re-checked here, per
             # inbound message, and unlike the old SSE 429 (which ended the
             # whole HTTP request), the connection stays open afterwards.
+            if not check_user_rate_limit(user_id):
+                RATE_LIMITED.labels(kind="user").inc()
+                await send(
+                    {
+                        "type": "quota_exceeded",
+                        "turn_id": turn_id,
+                        "message": "You're sending messages too quickly. Please wait a moment.",
+                    }
+                )
+                await send({"type": "turn_end", "turn_id": turn_id})
+                continue
             try:
                 await enforce_gemini_quota()
             except HTTPException as exc:
@@ -304,5 +477,7 @@ async def chat_ws(websocket: WebSocket) -> None:
     except WebSocketDisconnect:
         pass
     finally:
+        if expiry_watch is not None:
+            expiry_watch.cancel()
         if current_task is not None and not current_task.done():
             current_task.cancel()

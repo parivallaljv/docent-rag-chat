@@ -4,3 +4,11 @@ __pycache__/
 venv/
 .env
 .pytest_cache/
+
+# eval harness: downloaded corpus, embedding cache, ad-hoc runs (baseline.json is tracked)
+eval/corpus/
+eval/.cache/
+eval/results/*
+!eval/results/baseline.json
+!eval/results/baseline_v0.json
+!eval/results/agentic_baseline.json

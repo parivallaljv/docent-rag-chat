@@ -2,6 +2,7 @@
 and token-budget-aware prompt assembly. Pure logic, synthetic candidates
 (plain dicts), no credentials or DB needed.
 """
+
 from app.retrieval.prompt import (
     NO_CONTEXT_SENTINEL,
     AssembledPrompt,
@@ -66,9 +67,10 @@ def test_build_prompt_assembles_numbered_context_and_citations():
     result = build_prompt("What is the refund policy?", candidates, similarity_threshold=0.65)
 
     assert isinstance(result, AssembledPrompt)
-    assert "[1] The refund window is 30 days." in result.prompt
-    assert "[2] Refunds are processed within 5 business days." in result.prompt
-    assert "Question: What is the refund policy?" in result.prompt
+    assert '<excerpt id="1" source="example.pdf" page="2">' in result.prompt
+    assert "The refund window is 30 days." in result.prompt
+    assert '<excerpt id="2" source="example.pdf" page="3">' in result.prompt
+    assert "<question>What is the refund policy?</question>" in result.prompt
 
     assert [c.marker for c in result.citations] == [1, 2]
     assert result.citations[0].page_number == 2
@@ -78,12 +80,14 @@ def test_build_prompt_assembles_numbered_context_and_citations():
 def test_build_prompt_includes_history_when_present():
     candidates = [_chunk(1, "Some fact.", similarity=0.9)]
     history = [ChatTurn(role="user", content="Hi"), ChatTurn(role="assistant", content="Hello!")]
-    result = build_prompt("Follow up question", candidates, history=history, similarity_threshold=0.65)
+    result = build_prompt(
+        "Follow up question", candidates, history=history, similarity_threshold=0.65
+    )
 
     assert isinstance(result, AssembledPrompt)
-    assert "Recent conversation:" in result.prompt
-    assert "User: Hi" in result.prompt
-    assert "Assistant: Hello!" in result.prompt
+    assert "<history>" in result.prompt
+    assert '<turn role="user">Hi</turn>' in result.prompt
+    assert '<turn role="assistant">Hello!</turn>' in result.prompt
 
 
 def test_build_prompt_omits_history_section_when_absent():
@@ -91,7 +95,7 @@ def test_build_prompt_omits_history_section_when_absent():
     result = build_prompt("A question", candidates, history=None, similarity_threshold=0.65)
 
     assert isinstance(result, AssembledPrompt)
-    assert "Recent conversation:" not in result.prompt
+    assert "<turn " not in result.prompt
 
 
 def test_build_prompt_only_uses_last_n_history_turns():

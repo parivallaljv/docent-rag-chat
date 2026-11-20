@@ -7,15 +7,19 @@ but it is NOT correct across multiple instances/replicas and does not
 survive a process restart without losing count -- swap in a Postgres-backed
 (or Redis-backed) counter for that case.
 """
+
 from __future__ import annotations
 
 import asyncio
 import functools
 import logging
 import random
+import time
+from collections import deque
+from collections.abc import Awaitable, Callable
 from datetime import date
 from threading import Lock
-from typing import Any, Awaitable, Callable, TypeVar
+from typing import Any, TypeVar
 
 from fastapi import HTTPException, status
 
@@ -64,6 +68,42 @@ class DailyQuotaCounter:
 
 
 _quota_counter = DailyQuotaCounter()
+
+
+class SlidingWindowLimiter:
+    """Per-key sliding-window limiter (in-memory, so per process: with several
+    instances each enforces its own window)."""
+
+    def __init__(self, clock=time.monotonic) -> None:
+        self._lock = Lock()
+        self._hits: dict[str, deque[float]] = {}
+        self._clock = clock
+
+    def allow(self, key: str, limit: int, window_seconds: float) -> bool:
+        now = self._clock()
+        with self._lock:
+            q = self._hits.setdefault(key, deque())
+            while q and now - q[0] >= window_seconds:
+                q.popleft()
+            if len(q) >= limit:
+                return False
+            q.append(now)
+            if len(self._hits) > 10_000:  # drop idle keys so memory stays bounded
+                for k in [
+                    k for k, v in self._hits.items() if not v or now - v[-1] >= window_seconds
+                ]:
+                    self._hits.pop(k, None)
+            return True
+
+
+_user_limiter = SlidingWindowLimiter()
+
+
+def check_user_rate_limit(user_id: str) -> bool:
+    """True if this user may start another chat turn right now."""
+    return _user_limiter.allow(
+        str(user_id), settings.PER_USER_RATE_LIMIT, settings.PER_USER_RATE_WINDOW_SECONDS
+    )
 
 
 async def enforce_gemini_quota() -> None:

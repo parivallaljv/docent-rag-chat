@@ -2,16 +2,15 @@
 every new connection so plain Python lists/numpy arrays can be passed and
 received as `vector` columns directly in raw SQL, no manual (de)serialization.
 """
-from __future__ import annotations
 
-from typing import Optional
+from __future__ import annotations
 
 import asyncpg
 from pgvector.asyncpg import register_vector
 
 from ..core.config import settings
 
-_pool: Optional[asyncpg.Pool] = None
+_pool: asyncpg.Pool | None = None
 
 
 async def create_pool() -> asyncpg.Pool:

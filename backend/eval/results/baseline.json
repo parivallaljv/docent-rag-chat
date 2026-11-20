@@ -1,0 +1,699 @@
+{
+  "timestamp": "2026-11-17T01:23:17",
+  "config": {
+    "embedding_model": "gemini-embedding-001",
+    "chunk_target_tokens": 500,
+    "chunk_overlap_ratio": 0.15,
+    "top_n": 20,
+    "top_k": 5,
+    "mmr_lambda": 0.5
+  },
+  "metrics": {
+    "dense": {
+      "hit@1": 0.4242,
+      "hit@3": 0.6667,
+      "hit@5": 0.8485,
+      "recall@5": 0.7727,
+      "mrr": 0.5778,
+      "ndcg@5": 0.6094
+    },
+    "dense+mmr": {
+      "hit@1": 0.4242,
+      "hit@3": 0.4848,
+      "hit@5": 0.7273,
+      "recall@5": 0.601,
+      "mrr": 0.5005,
+      "ndcg@5": 0.4815
+    },
+    "bm25": {
+      "hit@1": 0.4545,
+      "hit@3": 0.697,
+      "hit@5": 0.8182,
+      "recall@5": 0.702,
+      "mrr": 0.5843,
+      "ndcg@5": 0.5722
+    },
+    "hybrid": {
+      "hit@1": 0.5455,
+      "hit@3": 0.7576,
+      "hit@5": 0.9091,
+      "recall@5": 0.8081,
+      "mrr": 0.6697,
+      "ndcg@5": 0.662
+    },
+    "hybrid+mmr": {
+      "hit@1": 0.4242,
+      "hit@3": 0.5152,
+      "hit@5": 0.7576,
+      "recall@5": 0.6263,
+      "mrr": 0.5091,
+      "ndcg@5": 0.4956
+    }
+  },
+  "per_question": [
+    {
+      "id": "q01",
+      "relevant": [
+        "attention.pdf:3"
+      ],
+      "retrieved": [
+        "attention.pdf:3",
+        "attention.pdf:5",
+        "attention.pdf:6",
+        "attention.pdf:7",
+        "attention.pdf:9"
+      ],
+      "hit@1": 1.0,
+      "hit@3": 1.0,
+      "hit@5": 1.0,
+      "recall@5": 1.0,
+      "mrr": 1.0,
+      "ndcg@5": 1.0
+    },
+    {
+      "id": "q02",
+      "relevant": [
+        "attention.pdf:3",
+        "attention.pdf:5"
+      ],
+      "retrieved": [
+        "attention.pdf:5",
+        "attention.pdf:3",
+        "attention.pdf:6",
+        "attention.pdf:4",
+        "bert.pdf:9"
+      ],
+      "hit@1": 1.0,
+      "hit@3": 1.0,
+      "hit@5": 1.0,
+      "recall@5": 1.0,
+      "mrr": 1.0,
+      "ndcg@5": 1.0
+    },
+    {
+      "id": "q03",
+      "relevant": [
+        "attention.pdf:5"
+      ],
+      "retrieved": [
+        "attention.pdf:5",
+        "attention.pdf:9",
+        "attention.pdf:7",
+        "attention.pdf:4",
+        "attention.pdf:15"
+      ],
+      "hit@1": 1.0,
+      "hit@3": 1.0,
+      "hit@5": 1.0,
+      "recall@5": 1.0,
+      "mrr": 1.0,
+      "ndcg@5": 1.0
+    },
+    {
+      "id": "q04",
+      "relevant": [
+        "attention.pdf:7"
+      ],
+      "retrieved": [
+        "attention.pdf:8",
+        "bert.pdf:13",
+        "bert.pdf:14",
+        "attention.pdf:8",
+        "attention.pdf:7"
+      ],
+      "hit@1": 0.0,
+      "hit@3": 0.0,
+      "hit@5": 1.0,
+      "recall@5": 1.0,
+      "mrr": 0.2,
+      "ndcg@5": 0.38685280723454163
+    },
+    {
+      "id": "q05",
+      "relevant": [
+        "attention.pdf:1"
+      ],
+      "retrieved": [
+        "attention.pdf:8",
+        "attention.pdf:8",
+        "attention.pdf:9",
+        "attention.pdf:1",
+        "attention.pdf:10"
+      ],
+      "hit@1": 0.0,
+      "hit@3": 0.0,
+      "hit@5": 1.0,
+      "recall@5": 1.0,
+      "mrr": 0.25,
+      "ndcg@5": 0.43067655807339306
+    },
+    {
+      "id": "q06",
+      "relevant": [
+        "attention.pdf:4"
+      ],
+      "retrieved": [
+        "attention.pdf:4",
+        "attention.pdf:5",
+        "attention.pdf:6",
+        "attention.pdf:8",
+        "bert.pdf:5"
+      ],
+      "hit@1": 1.0,
+      "hit@3": 1.0,
+      "hit@5": 1.0,
+      "recall@5": 1.0,
+      "mrr": 1.0,
+      "ndcg@5": 1.0
+    },
+    {
+      "id": "q07",
+      "relevant": [
+        "attention.pdf:6"
+      ],
+      "retrieved": [
+        "attention.pdf:6",
+        "bert.pdf:4",
+        "bert.pdf:5",
+        "bert.pdf:8",
+        "bert.pdf:13"
+      ],
+      "hit@1": 1.0,
+      "hit@3": 1.0,
+      "hit@5": 1.0,
+      "recall@5": 1.0,
+      "mrr": 1.0,
+      "ndcg@5": 1.0
+    },
+    {
+      "id": "q08",
+      "relevant": [
+        "attention.pdf:8"
+      ],
+      "retrieved": [
+        "attention.pdf:8",
+        "bert.pdf:13",
+        "attention.pdf:8",
+        "attention.pdf:9",
+        "bert.pdf:8"
+      ],
+      "hit@1": 1.0,
+      "hit@3": 1.0,
+      "hit@5": 1.0,
+      "recall@5": 1.0,
+      "mrr": 1.0,
+      "ndcg@5": 1.0
+    },
+    {
+      "id": "q09",
+      "relevant": [
+        "attention.pdf:7"
+      ],
+      "retrieved": [
+        "attention.pdf:8",
+        "attention.pdf:7",
+        "bert.pdf:13",
+        "bert.pdf:14",
+        "attention.pdf:8"
+      ],
+      "hit@1": 0.0,
+      "hit@3": 1.0,
+      "hit@5": 1.0,
+      "recall@5": 1.0,
+      "mrr": 0.5,
+      "ndcg@5": 0.6309297535714575
+    },
+    {
+      "id": "q10",
+      "relevant": [
+        "attention.pdf:8"
+      ],
+      "retrieved": [
+        "attention.pdf:8",
+        "bert.pdf:13",
+        "bert.pdf:16",
+        "bert.pdf:13",
+        "bert.pdf:6"
+      ],
+      "hit@1": 1.0,
+      "hit@3": 1.0,
+      "hit@5": 1.0,
+      "recall@5": 1.0,
+      "mrr": 1.0,
+      "ndcg@5": 1.0
+    },
+    {
+      "id": "q11",
+      "relevant": [
+        "attention.pdf:6",
+        "attention.pdf:7"
+      ],
+      "retrieved": [
+        "attention.pdf:7",
+        "attention.pdf:6",
+        "attention.pdf:2",
+        "attention.pdf:10",
+        "attention.pdf:11"
+      ],
+      "hit@1": 1.0,
+      "hit@3": 1.0,
+      "hit@5": 1.0,
+      "recall@5": 1.0,
+      "mrr": 1.0,
+      "ndcg@5": 1.0
+    },
+    {
+      "id": "q12",
+      "relevant": [
+        "attention.pdf:3"
+      ],
+      "retrieved": [
+        "attention.pdf:5",
+        "attention.pdf:3",
+        "attention.pdf:6",
+        "attention.pdf:2",
+        "attention.pdf:7"
+      ],
+      "hit@1": 0.0,
+      "hit@3": 1.0,
+      "hit@5": 1.0,
+      "recall@5": 1.0,
+      "mrr": 0.5,
+      "ndcg@5": 0.6309297535714575
+    },
+    {
+      "id": "q13",
+      "relevant": [
+        "bert.pdf:4"
+      ],
+      "retrieved": [
+        "bert.pdf:4",
+        "bert.pdf:13",
+        "bert.pdf:2",
+        "bert.pdf:16",
+        "bert.pdf:13"
+      ],
+      "hit@1": 1.0,
+      "hit@3": 1.0,
+      "hit@5": 1.0,
+      "recall@5": 1.0,
+      "mrr": 1.0,
+      "ndcg@5": 1.0
+    },
+    {
+      "id": "q14",
+      "relevant": [
+        "bert.pdf:4"
+      ],
+      "retrieved": [
+        "bert.pdf:5",
+        "bert.pdf:7",
+        "bert.pdf:2",
+        "bert.pdf:2",
+        "bert.pdf:13"
+      ],
+      "hit@1": 0.0,
+      "hit@3": 0.0,
+      "hit@5": 0.0,
+      "recall@5": 0.0,
+      "mrr": 0.0,
+      "ndcg@5": 0.0
+    },
+    {
+      "id": "q15",
+      "relevant": [
+        "bert.pdf:3",
+        "bert.pdf:8"
+      ],
+      "retrieved": [
+        "bert.pdf:8",
+        "bert.pdf:9",
+        "bert.pdf:16",
+        "bert.pdf:14",
+        "bert.pdf:15"
+      ],
+      "hit@1": 1.0,
+      "hit@3": 1.0,
+      "hit@5": 1.0,
+      "recall@5": 0.5,
+      "mrr": 1.0,
+      "ndcg@5": 0.6131471927654584
+    },
+    {
+      "id": "q16",
+      "relevant": [
+        "bert.pdf:14",
+        "bert.pdf:5"
+      ],
+      "retrieved": [
+        "bert.pdf:14",
+        "bert.pdf:13",
+        "bert.pdf:3",
+        "bert.pdf:5",
+        "bert.pdf:15"
+      ],
+      "hit@1": 1.0,
+      "hit@3": 1.0,
+      "hit@5": 1.0,
+      "recall@5": 1.0,
+      "mrr": 1.0,
+      "ndcg@5": 0.8772153153380493
+    },
+    {
+      "id": "q17",
+      "relevant": [
+        "bert.pdf:1"
+      ],
+      "retrieved": [
+        "bert.pdf:6",
+        "bert.pdf:15",
+        "bert.pdf:5",
+        "bert.pdf:7",
+        "bert.pdf:7"
+      ],
+      "hit@1": 0.0,
+      "hit@3": 0.0,
+      "hit@5": 0.0,
+      "recall@5": 0.0,
+      "mrr": 0.0,
+      "ndcg@5": 0.0
+    },
+    {
+      "id": "q18",
+      "relevant": [
+        "bert.pdf:1"
+      ],
+      "retrieved": [
+        "bert.pdf:6",
+        "bert.pdf:7",
+        "bert.pdf:7",
+        "bert.pdf:5",
+        "bert.pdf:1"
+      ],
+      "hit@1": 0.0,
+      "hit@3": 0.0,
+      "hit@5": 1.0,
+      "recall@5": 1.0,
+      "mrr": 0.2,
+      "ndcg@5": 0.38685280723454163
+    },
+    {
+      "id": "q19",
+      "relevant": [
+        "bert.pdf:13"
+      ],
+      "retrieved": [
+        "bert.pdf:13",
+        "bert.pdf:14",
+        "bert.pdf:9",
+        "bert.pdf:16",
+        "attention.pdf:8"
+      ],
+      "hit@1": 1.0,
+      "hit@3": 1.0,
+      "hit@5": 1.0,
+      "recall@5": 1.0,
+      "mrr": 1.0,
+      "ndcg@5": 1.0
+    },
+    {
+      "id": "q20",
+      "relevant": [
+        "bert.pdf:4"
+      ],
+      "retrieved": [
+        "bert.pdf:13",
+        "bert.pdf:16",
+        "bert.pdf:12",
+        "bert.pdf:4",
+        "bert.pdf:13"
+      ],
+      "hit@1": 0.0,
+      "hit@3": 0.0,
+      "hit@5": 1.0,
+      "recall@5": 1.0,
+      "mrr": 0.25,
+      "ndcg@5": 0.43067655807339306
+    },
+    {
+      "id": "q21",
+      "relevant": [
+        "bert.pdf:8"
+      ],
+      "retrieved": [
+        "bert.pdf:7",
+        "bert.pdf:8",
+        "bert.pdf:5",
+        "bert.pdf:13",
+        "bert.pdf:13"
+      ],
+      "hit@1": 0.0,
+      "hit@3": 1.0,
+      "hit@5": 1.0,
+      "recall@5": 1.0,
+      "mrr": 0.5,
+      "ndcg@5": 0.6309297535714575
+    },
+    {
+      "id": "q22",
+      "relevant": [
+        "bert.pdf:13",
+        "bert.pdf:16"
+      ],
+      "retrieved": [
+        "bert.pdf:13",
+        "bert.pdf:14",
+        "bert.pdf:16",
+        "attention.pdf:8",
+        "bert.pdf:13"
+      ],
+      "hit@1": 1.0,
+      "hit@3": 1.0,
+      "hit@5": 1.0,
+      "recall@5": 1.0,
+      "mrr": 1.0,
+      "ndcg@5": 0.9197207891481876
+    },
+    {
+      "id": "q23",
+      "relevant": [
+        "bert.pdf:4"
+      ],
+      "retrieved": [
+        "bert.pdf:5",
+        "bert.pdf:13",
+        "bert.pdf:15",
+        "bert.pdf:2",
+        "bert.pdf:4"
+      ],
+      "hit@1": 0.0,
+      "hit@3": 0.0,
+      "hit@5": 1.0,
+      "recall@5": 1.0,
+      "mrr": 0.2,
+      "ndcg@5": 0.38685280723454163
+    },
+    {
+      "id": "q24",
+      "relevant": [
+        "bert.pdf:9"
+      ],
+      "retrieved": [
+        "bert.pdf:9",
+        "bert.pdf:10",
+        "bert.pdf:16",
+        "bert.pdf:14",
+        "bert.pdf:15"
+      ],
+      "hit@1": 1.0,
+      "hit@3": 1.0,
+      "hit@5": 1.0,
+      "recall@5": 1.0,
+      "mrr": 1.0,
+      "ndcg@5": 1.0
+    },
+    {
+      "id": "m01",
+      "relevant": [
+        "attention.pdf:3",
+        "attention.pdf:7"
+      ],
+      "retrieved": [
+        "attention.pdf:8",
+        "attention.pdf:6",
+        "attention.pdf:7",
+        "bert.pdf:13",
+        "bert.pdf:9"
+      ],
+      "hit@1": 0.0,
+      "hit@3": 1.0,
+      "hit@5": 1.0,
+      "recall@5": 0.5,
+      "mrr": 0.3333333333333333,
+      "ndcg@5": 0.3065735963827292
+    },
+    {
+      "id": "m02",
+      "relevant": [
+        "attention.pdf:1",
+        "attention.pdf:7"
+      ],
+      "retrieved": [
+        "attention.pdf:8",
+        "attention.pdf:7",
+        "attention.pdf:9",
+        "attention.pdf:8",
+        "attention.pdf:1"
+      ],
+      "hit@1": 0.0,
+      "hit@3": 1.0,
+      "hit@5": 1.0,
+      "recall@5": 1.0,
+      "mrr": 0.5,
+      "ndcg@5": 0.6240505200038379
+    },
+    {
+      "id": "m03",
+      "relevant": [
+        "attention.pdf:4",
+        "attention.pdf:5"
+      ],
+      "retrieved": [
+        "attention.pdf:4",
+        "attention.pdf:5",
+        "attention.pdf:9",
+        "attention.pdf:6",
+        "attention.pdf:7"
+      ],
+      "hit@1": 1.0,
+      "hit@3": 1.0,
+      "hit@5": 1.0,
+      "recall@5": 1.0,
+      "mrr": 1.0,
+      "ndcg@5": 1.0
+    },
+    {
+      "id": "m04",
+      "relevant": [
+        "attention.pdf:6",
+        "attention.pdf:8"
+      ],
+      "retrieved": [
+        "attention.pdf:8",
+        "bert.pdf:13",
+        "attention.pdf:8",
+        "attention.pdf:9",
+        "bert.pdf:13"
+      ],
+      "hit@1": 1.0,
+      "hit@3": 1.0,
+      "hit@5": 1.0,
+      "recall@5": 0.5,
+      "mrr": 1.0,
+      "ndcg@5": 0.6131471927654584
+    },
+    {
+      "id": "m05",
+      "relevant": [
+        "bert.pdf:1",
+        "bert.pdf:14",
+        "bert.pdf:5"
+      ],
+      "retrieved": [
+        "bert.pdf:6",
+        "bert.pdf:15",
+        "bert.pdf:14",
+        "bert.pdf:5",
+        "bert.pdf:7"
+      ],
+      "hit@1": 0.0,
+      "hit@3": 1.0,
+      "hit@5": 1.0,
+      "recall@5": 0.6666666666666666,
+      "mrr": 0.3333333333333333,
+      "ndcg@5": 0.4367467095119258
+    },
+    {
+      "id": "m06",
+      "relevant": [
+        "bert.pdf:1",
+        "bert.pdf:3",
+        "bert.pdf:8"
+      ],
+      "retrieved": [
+        "bert.pdf:8",
+        "bert.pdf:7",
+        "bert.pdf:6",
+        "bert.pdf:9",
+        "bert.pdf:16"
+      ],
+      "hit@1": 1.0,
+      "hit@3": 1.0,
+      "hit@5": 1.0,
+      "recall@5": 0.3333333333333333,
+      "mrr": 1.0,
+      "ndcg@5": 0.46927872602275644
+    },
+    {
+      "id": "m07",
+      "relevant": [
+        "bert.pdf:13",
+        "bert.pdf:16",
+        "bert.pdf:4"
+      ],
+      "retrieved": [
+        "bert.pdf:13",
+        "bert.pdf:16",
+        "bert.pdf:13",
+        "attention.pdf:8",
+        "bert.pdf:14"
+      ],
+      "hit@1": 1.0,
+      "hit@3": 1.0,
+      "hit@5": 1.0,
+      "recall@5": 0.6666666666666666,
+      "mrr": 1.0,
+      "ndcg@5": 0.7653606369886217
+    },
+    {
+      "id": "m08",
+      "relevant": [
+        "bert.pdf:13",
+        "bert.pdf:4"
+      ],
+      "retrieved": [
+        "bert.pdf:5",
+        "bert.pdf:15",
+        "bert.pdf:13",
+        "bert.pdf:14",
+        "bert.pdf:16"
+      ],
+      "hit@1": 0.0,
+      "hit@3": 1.0,
+      "hit@5": 1.0,
+      "recall@5": 0.5,
+      "mrr": 0.3333333333333333,
+      "ndcg@5": 0.3065735963827292
+    },
+    {
+      "id": "m09",
+      "relevant": [
+        "attention.pdf:1",
+        "bert.pdf:1"
+      ],
+      "retrieved": [
+        "attention.pdf:8",
+        "bert.pdf:6",
+        "bert.pdf:5",
+        "bert.pdf:15",
+        "bert.pdf:7"
+      ],
+      "hit@1": 0.0,
+      "hit@3": 0.0,
+      "hit@5": 0.0,
+      "recall@5": 0.0,
+      "mrr": 0.0,
+      "ndcg@5": 0.0
+    }
+  ]
+}
