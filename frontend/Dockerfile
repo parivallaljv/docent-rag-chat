@@ -1,10 +1,10 @@
 # syntax=docker/dockerfile:1
-FROM node:22-alpine AS deps
+FROM node:26-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 
-FROM node:22-alpine AS build
+FROM node:26-alpine AS build
 WORKDIR /app
 # NEXT_PUBLIC_* values are inlined at build time.
 ARG NEXT_PUBLIC_SUPABASE_URL
@@ -19,7 +19,7 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build
 
-FROM node:22-alpine AS runtime
+FROM node:26-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 PORT=3000 HOSTNAME=0.0.0.0
 RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx /opt/yarn* /usr/local/bin/yarn* && addgroup -S app && adduser -S app -G app
