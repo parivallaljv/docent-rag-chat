@@ -119,6 +119,15 @@ class Settings(BaseSettings):
     AGENT_MAX_ROUNDS: int = 2
     AGENT_MAX_QUERIES: int = 4  # total searches incl. the original question
     AGENT_STEP_TIMEOUT: float = 10.0
+    # With AGENTIC_SEARCH on: "search" (query refinement), "tools" (multi-tool
+    # loop: search/get_page/compare/calculate) or "plan" (plan-and-execute).
+    AGENT_MODE: str = "search"
+    AGENT_MAX_STEPS: int = 3
+    AGENT_MAX_TOOL_CALLS: int = 6
+    # Critic: second LLM pass that flags unsupported claims in an answer.
+    CRITIC_ENABLED: bool = False
+    CRITIC_MODEL: str = ""
+    CRITIC_TIMEOUT_SECONDS: float = 20.0
 
     # Model for structured features (summary/key facts/quiz); empty = CHAT_MODEL chain.
     INSIGHTS_MODEL: str = ""

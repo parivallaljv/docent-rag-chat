@@ -308,7 +308,7 @@ async def get_document_chunks(
 ):
     async with pool.acquire() as conn:
         return await conn.fetch(
-            "SELECT page_number, chunk_index, content FROM chunks "
+            "SELECT id, page_number, chunk_index, content FROM chunks "
             "WHERE document_id = $1 AND user_id = $2 ORDER BY chunk_index LIMIT $3",
             _as_uuid(document_id),
             _as_uuid(user_id),

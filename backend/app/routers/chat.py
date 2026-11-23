@@ -45,6 +45,10 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 
+from ..agent.critic import critique_answer
+from ..agent.loop import GeminiToolPlanner, run_tool_agent
+from ..agent.tools import build_tools
+from ..agent.workflow import plan_and_execute
 from ..core.auth import TokenVerificationError, verify_token_claims
 from ..core.config import settings
 from ..core.logging import new_request_id, request_id_var
@@ -95,7 +99,50 @@ async def _run_chat_turn_inner(
                 history=payload.history if is_original else None,
             )
 
-        if settings.AGENTIC_SEARCH:
+        tool_notes: list[str] = []
+        agent_chunks_lack_embeddings = False
+        if settings.AGENTIC_SEARCH and settings.AGENT_MODE == "tools":
+            first = await search_one(payload.message, True)
+
+            async def scoped(query: str, doc_id):
+                return await search_mod.search(
+                    pool,
+                    user_id=user_id,
+                    query_text=query,
+                    document_id=doc_id or payload.document_id,
+                    top_n=settings.RETRIEVAL_TOP_N,
+                )
+
+            tools = build_tools(pool, user_id, scoped)
+            res = await run_tool_agent(
+                first,
+                tools,
+                GeminiToolPlanner(payload.message, payload.history, tools),
+                max_steps=settings.AGENT_MAX_STEPS,
+                max_calls=settings.AGENT_MAX_TOOL_CALLS,
+                top_n=settings.RETRIEVAL_TOP_N,
+                rrf_k=settings.RRF_K,
+                step_timeout=settings.AGENT_STEP_TIMEOUT,
+            )
+            candidates, tool_notes = res.candidates, res.notes
+            agent_chunks_lack_embeddings = True
+            trace.attrs["agent_calls"] = res.calls
+            trace.attrs["agent_steps"] = res.steps
+            if res.error:
+                trace.attrs["agent_error"] = res.error
+        elif settings.AGENTIC_SEARCH and settings.AGENT_MODE == "plan":
+            agent = await plan_and_execute(
+                payload.message,
+                search_one,
+                max_sub=settings.AGENT_MAX_QUERIES - 1,
+                top_n=settings.RETRIEVAL_TOP_N,
+                rrf_k=settings.RRF_K,
+            )
+            candidates = agent.candidates
+            trace.attrs["agent_queries"] = agent.queries
+            if agent.error:
+                trace.attrs["agent_error"] = agent.error
+        elif settings.AGENTIC_SEARCH:
             agent = await agent_mod.agentic_retrieve(search_one, payload.message, payload.history)
             candidates = agent.candidates
             trace.attrs["agent_queries"] = agent.queries
@@ -107,7 +154,7 @@ async def _run_chat_turn_inner(
         trace.mark("retrieve", time.perf_counter() - _t)
         _t = time.perf_counter()
 
-        if settings.MMR_LAMBDA >= 1.0:
+        if settings.MMR_LAMBDA >= 1.0 or agent_chunks_lack_embeddings:
             # Pure relevance: keep search()'s order (cosine, or RRF when hybrid).
             ranked = candidates[: settings.RERANK_TOP_K]
         else:
@@ -127,6 +174,7 @@ async def _run_chat_turn_inner(
             similarity_threshold=settings.SIMILARITY_THRESHOLD,
             max_prompt_tokens=settings.MAX_PROMPT_TOKENS,
             history_turns=settings.HISTORY_TURNS,
+            tool_notes=tool_notes,
         )
         trace.mark("rank_prompt", time.perf_counter() - _t)
     except asyncio.CancelledError:
@@ -214,6 +262,13 @@ async def _run_chat_turn_inner(
         }
         for c in select_cited(assembled.citations, valid)
     ]
+    if settings.CRITIC_ENABLED and valid:
+        claims = await critique_answer(
+            "".join(answer_parts), select_cited(assembled.citations, valid)
+        )
+        if claims is not None:
+            trace.attrs["critic_unsupported"] = sum(1 for c in claims if not c["supported"])
+            yield ("critique", {"claims": claims})
     payload_out: dict = {"citations": citations}
     if not valid:
         payload_out["warning"] = "no_valid_citations"
