@@ -222,3 +222,13 @@ HyDE helps recall (multi-hop recall@5 0.574 -> 0.778) at +1 LLM call per questio
 
 ### Deliberately not built
 Hosted cross-encoder reranker and web-search tool (need third-party keys), embedding fine-tuning (needs a training stack), Playwright end-to-end test (needs a live Supabase login).
+
+### Applying database migrations
+
+```bash
+cd backend
+python -m scripts.apply_migrations --dry-run   # list what would run
+python -m scripts.apply_migrations             # apply pending migrations (tracked in public.schema_migrations)
+```
+
+An existing database whose migrations 001-004 were run by hand is detected and baselined automatically. Supabase free projects pause after about 7 idle days; the keep-alive workflow (set the `BACKEND_URL` repo variable) now also calls `/health/db`, which runs `SELECT 1` so the database sees activity.

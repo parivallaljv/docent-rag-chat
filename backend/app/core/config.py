@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     # fallback (not the primary model -- see CHAT_MODEL above) since it's
     # otherwise the most likely of these to be quota-exhausted first.
     # Comma-separated, parsed like ALLOWED_ORIGINS below.
-    CHAT_MODEL_FALLBACKS: str = "gemini-3.7-flash,gemini-flash-latest"
+    CHAT_MODEL_FALLBACKS: str = "gemini-3.7-flash,gemini-3.5-flash,gemini-3.5-flash-lite"
     EMBEDDING_MODEL: str = "gemini-embedding-001"
     EMBEDDING_DIM: int = 768
     # Empirically measured (2026-09-07): a single model's real free-tier
