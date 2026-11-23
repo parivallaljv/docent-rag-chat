@@ -186,3 +186,31 @@ claude mcp add docent -e DOCENT_ACCESS_TOKEN=<supabase access token> \
 ```
 
 `DOCENT_ACCESS_TOKEN` is a Supabase access token (it expires, typically after an hour; tools then return an error until you set a fresh one).
+
+## GenAI v2 features
+
+All off by default unless noted; see `backend/.env.example`. Migrations 007 (feedback), 008 (tags, summary, memory) and 009 (usage) must be applied to Supabase for the features that use them (the app degrades gracefully without them).
+
+| Feature | How |
+|---|---|
+| Multi-tool agent | `AGENTIC_SEARCH=true AGENT_MODE=tools`: the model calls `search_documents`, `get_page`, `compare_documents`, `calculate`; the final answer still comes from the grounded, fenced prompt (`backend/app/agent/`) |
+| Plan-and-execute | `AGENT_MODE=plan`: decompose, search in parallel, fuse |
+| Critic | `CRITIC_ENABLED=true`: second pass flags unsupported claims (`critique` event) |
+| HyDE / rerank / contextual chunks / semantic cache | Flags in `.env.example`; measured in `backend/eval/results/extras.json` |
+| Eval 2.0 | `python -m eval.run_eval --extras --generate` (structured LLM judge in `eval/judge.py`), `python -m eval.injection` (6 attacks x 2 questions, canary check), `python -m eval.export_feedback` |
+| Feedback | thumbs up/down -> `POST /messages/{id}/feedback` |
+| Multimodal | `FIGURE_CAPTIONS` indexes figure/table descriptions; browser voice input/read-aloud |
+| Document intelligence | `POST /documents/compare`, auto-tags, follow-up suggestions (`POST /chats/{id}/suggestions`), Markdown export |
+| Memory | rolling chat summary (`CHAT_SUMMARY`), editable user memory (`/memory`) |
+| LLMOps | `GET /usage`, opt-in Langfuse tracing (metadata only by default), model routing, PII redaction, prompt-leak warning, optional Ollama fallback |
+
+### Measured retrieval results (33 questions, 35 chunks, free-tier lite models)
+
+| Variant | hit@5 | recall@5 | MRR | nDCG@5 |
+|---|---|---|---|---|
+| hybrid (default) | 0.909 | 0.808 | 0.670 | 0.662 |
+| + HyDE | **0.970** | **0.909** | 0.668 | **0.703** |
+| + LLM rerank | 0.879 | 0.793 | 0.523 | 0.571 |
+| contextual chunks | 0.849 | 0.758 | 0.631 | 0.635 |
+
+HyDE helps recall (multi-hop recall@5 0.574 -> 0.778) at +1 LLM call per question. LLM rerank and contextual chunks did not help on this small corpus, so they stay off. Treat differences of a few points as noise at this sample size. Prompt-injection set: 12/12 resisted.
