@@ -51,6 +51,7 @@ from ..agent.loop import GeminiToolPlanner, run_tool_agent
 from ..agent.tools import build_tools
 from ..agent.workflow import plan_and_execute
 from ..core.auth import TokenVerificationError, verify_token_claims
+from ..core.background import spawn
 from ..core.config import settings
 from ..core.logging import new_request_id, request_id_var
 from ..core.metrics import RATE_LIMITED, Trace
@@ -60,12 +61,14 @@ from ..core.rate_limit import (
     is_quota_exhausted_error,
 )
 from ..core.semantic_cache import semantic_cache
+from ..core.tracing import export_trace
 from ..db import queries
 from ..db.client import get_pool
 from ..db.models import ChatMessage, ChatRequest
 from ..ingestion.chunker import approx_token_count
 from ..ingestion.embedder import embed_query
 from ..llm.gemini_client import stream_chat
+from ..llm.routing import route_model
 from ..retrieval import agent as agent_mod
 from ..retrieval import prompt as prompt_mod
 from ..retrieval import search as search_mod
@@ -221,13 +224,15 @@ async def _run_chat_turn_inner(
 
     trace.attrs["prompt_tokens_approx"] = approx_token_count(assembled.prompt)
     trace.attrs["chunks"] = len(assembled.citations)
+    chat_model = route_model(payload.message)
+    trace.attrs["model"] = chat_model
     answer_parts: list[str] = []
     _gen = time.perf_counter()
     try:
         async for token in stream_chat(
             prompt=assembled.prompt,
             system_instruction=assembled.system_instruction,
-            model=settings.CHAT_MODEL,
+            model=chat_model,
         ):
             if not answer_parts:
                 trace.mark("ttft", time.perf_counter() - _gen)
@@ -299,6 +304,9 @@ async def _run_chat_turn_inner(
         payload_out["warning"] = "no_valid_citations"
     if invalid:
         payload_out["invalid_markers"] = invalid
+    if prompt_mod.leaks_system_prompt("".join(answer_parts)):
+        logger.warning("possible system prompt leak in answer")
+        payload_out["warning"] = "possible_prompt_leak"
     if cache_vec is not None and valid and not tool_notes:
         semantic_cache.put(user_id, scope, cache_vec, "".join(answer_parts), citations)
     yield ("citations", payload_out)
@@ -391,6 +399,33 @@ async def _run_chat_turn(user_id: str, payload: ChatRequest) -> AsyncIterator[tu
         raise
     finally:
         trace.finish(outcome)
+        _after_turn(user_id, trace, outcome, payload.message, "".join(answer))
+
+
+def _after_turn(user_id: str, trace, outcome: str, message: str, answer: str) -> None:
+    """Optional tracing export + usage accounting. Never raises into the turn."""
+    try:
+        export_trace(trace, outcome, prompt_mod.PROMPT_VERSION, message, answer)
+        p = int(trace.attrs.get("prompt_tokens_approx", 0))
+        c = int(trace.attrs.get("completion_tokens_approx", 0))
+        if p or c:
+            cost = (
+                p * settings.COST_PER_1M_INPUT_USD + c * settings.COST_PER_1M_OUTPUT_USD
+            ) / 1_000_000
+            spawn(
+                queries.add_usage(
+                    get_pool(),
+                    user_id=user_id,
+                    kind="chat",
+                    model=trace.attrs.get("model"),
+                    prompt_tokens=p,
+                    completion_tokens=c,
+                    cost_usd=cost,
+                ),
+                "usage accounting",
+            )
+    except Exception:  # noqa: BLE001
+        logger.warning("after-turn bookkeeping failed", exc_info=True)
 
 
 def _parse_chat_request(msg: dict) -> ChatRequest:

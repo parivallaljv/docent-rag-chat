@@ -139,6 +139,22 @@ class Settings(BaseSettings):
     AUTO_TAGS: bool = False  # LLM topic tags per document after ingestion
     CHAT_SUMMARY: bool = False  # rolling summary of long chats
     USER_MEMORY: bool = True  # inject the user's own memory notes (no LLM cost)
+    # --- LLMOps ---
+    # Tracing (opt-in). Metadata only unless LANGFUSE_CAPTURE_CONTENT=true (PII-redacted).
+    LANGFUSE_HOST: str = "https://cloud.langfuse.com"
+    LANGFUSE_PUBLIC_KEY: str = ""
+    LANGFUSE_SECRET_KEY: str = ""
+    LANGFUSE_CAPTURE_CONTENT: bool = False
+    # Usage/cost accounting: price per 1M approximate tokens (0 = free tier).
+    COST_PER_1M_INPUT_USD: float = 0.0
+    COST_PER_1M_OUTPUT_USD: float = 0.0
+    # Model routing: fast model for simple questions, strong for analytical ones.
+    ROUTING_ENABLED: bool = False
+    CHAT_MODEL_FAST: str = ""
+    CHAT_MODEL_STRONG: str = ""
+    # Optional local model (Ollama OpenAI-compatible API) as a last fallback.
+    OLLAMA_BASE_URL: str = ""  # e.g. http://localhost:11434
+    OLLAMA_MODEL: str = "llama3.2"
     AGENT_MODE: str = "search"
     AGENT_MAX_STEPS: int = 3
     AGENT_MAX_TOOL_CALLS: int = 6

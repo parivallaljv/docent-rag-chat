@@ -1,5 +1,5 @@
 """Real-Postgres checks for db/queries.py. Skipped unless TEST_DB_URL points at a
-database with migrations 001, 005, 006, 007, 008 applied (plus an `auth.users` table; see
+database with migrations 001, 005, 006, 007, 008, 009 applied (plus an `auth.users` table; see
 backend/docker/00_auth_stub.sql). CI runs it against a pgvector service container."""
 
 import asyncio
@@ -105,6 +105,34 @@ async def _scenario():
         )
         async with pool.acquire() as conn:
             assert await conn.fetchval("SELECT rating FROM message_feedback") == 1
+
+        # usage accounting (migration 009)
+        await queries.add_usage(
+            pool,
+            user_id=u1,
+            kind="chat",
+            model="m",
+            prompt_tokens=10,
+            completion_tokens=5,
+            cost_usd=0.001,
+        )
+        await queries.add_usage(
+            pool,
+            user_id=u1,
+            kind="chat",
+            model="m",
+            prompt_tokens=1,
+            completion_tokens=1,
+            cost_usd=0.002,
+        )
+        totals, daily = await queries.usage_summary(pool, user_id=u1, days=30)
+        assert (
+            totals["turns"] == 2
+            and totals["prompt_tokens"] == 11
+            and abs(totals["cost_usd"] - 0.003) < 1e-9
+        )
+        assert len(daily) == 1 and daily[0]["turns"] == 2
+        assert (await queries.usage_summary(pool, user_id=u2, days=30))[0]["turns"] == 0
 
         # memory + chat summary + tags (migration 008)
         assert await queries.get_memory(pool, user_id=u1) is None

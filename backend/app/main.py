@@ -15,7 +15,7 @@ from .core.config import settings
 from .core.logging import new_request_id, request_id_var, setup_logging
 from .db.client import close_pool, create_pool
 from .ingestion.pipeline import recover_stuck_documents
-from .routers import chat, chats, documents, health, insights, memory, messages
+from .routers import chat, chats, documents, health, insights, memory, messages, usage
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -69,6 +69,7 @@ app.include_router(chat.router)
 app.include_router(chats.router)
 app.include_router(messages.router)
 app.include_router(memory.router)
+app.include_router(usage.router)
 app.include_router(insights.router)
 
 

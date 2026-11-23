@@ -374,6 +374,60 @@ async def delete_memory(pool: asyncpg.Pool, *, user_id: Any) -> None:
         await conn.execute("DELETE FROM user_memory WHERE user_id = $1", _as_uuid(user_id))
 
 
+# --- usage ---------------------------------------------------------------------
+
+
+async def add_usage(
+    pool: asyncpg.Pool,
+    *,
+    user_id: Any,
+    kind: str,
+    model: str | None,
+    prompt_tokens: int,
+    completion_tokens: int,
+    cost_usd: float,
+) -> None:
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO usage_events (user_id, kind, model, prompt_tokens, completion_tokens, "
+            "cost_usd) VALUES ($1, $2, $3, $4, $5, $6)",
+            _as_uuid(user_id),
+            kind,
+            model,
+            prompt_tokens,
+            completion_tokens,
+            cost_usd,
+        )
+
+
+async def usage_summary(pool: asyncpg.Pool, *, user_id: Any, days: int = 30):
+    """(totals dict, [per-day dicts]) for the last `days` days."""
+    uid = _as_uuid(user_id)
+    async with pool.acquire() as conn:
+        t = await conn.fetchrow(
+            "SELECT count(*) AS turns, coalesce(sum(prompt_tokens),0) AS prompt_tokens, "
+            "coalesce(sum(completion_tokens),0) AS completion_tokens, "
+            "coalesce(sum(cost_usd),0) AS cost_usd FROM usage_events "
+            "WHERE user_id = $1 AND created_at >= now() - make_interval(days => $2)",
+            uid,
+            days,
+        )
+        rows = await conn.fetch(
+            "SELECT created_at::date AS day, count(*) AS turns, "
+            "sum(prompt_tokens) AS prompt_tokens, sum(completion_tokens) AS completion_tokens, "
+            "sum(cost_usd) AS cost_usd FROM usage_events "
+            "WHERE user_id = $1 AND created_at >= now() - make_interval(days => $2) "
+            "GROUP BY 1 ORDER BY 1",
+            uid,
+            days,
+        )
+    totals = {**dict(t), "cost_usd": float(t["cost_usd"])}
+    daily = [
+        {**dict(r), "day": r["day"].isoformat(), "cost_usd": float(r["cost_usd"])} for r in rows
+    ]
+    return totals, daily
+
+
 # --- document insights ---------------------------------------------------------
 
 
