@@ -30,7 +30,9 @@ def migration_files() -> list[Path]:
 async def main(dry_run: bool) -> int:
     conn = await asyncpg.connect(settings.SUPABASE_DB_URL, timeout=30)
     try:
-        had_table = await conn.fetchval("select to_regclass('public.schema_migrations') is not null")
+        had_table = await conn.fetchval(
+            "select to_regclass('public.schema_migrations') is not null"
+        )
         have_app = await conn.fetchval("select to_regclass('public.documents') is not null")
         if not dry_run:
             await conn.execute(
