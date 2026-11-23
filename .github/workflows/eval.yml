@@ -24,7 +24,7 @@ jobs:
       - name: Skip when no API key (e.g. fork PRs)
         id: key
         run: echo "present=$([ -n "$GEMINI_API_KEY" ] && echo yes || echo no)" >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         if: steps.key.outputs.present == 'yes'
         with:
           python-version: "3.11"
