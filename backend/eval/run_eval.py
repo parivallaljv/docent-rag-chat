@@ -33,6 +33,7 @@ from app.retrieval.rerank import dot, mmr_rerank
 
 from .bm25 import BM25
 from .fetch_corpus import ensure_corpus
+from .judge import RUBRIC_HASH, judge_answer, judge_model
 from .metrics import hit_at_k, mrr, ndcg_at_k, recall_at_k
 
 HERE = Path(__file__).parent
@@ -62,9 +63,12 @@ async def _backoff(fn, *args, tries: int = 6):
         try:
             return await fn(*args)
         except Exception as exc:  # noqa: BLE001
-            if "RESOURCE_EXHAUSTED" not in str(exc) or attempt == tries - 1:
+            text = f"{exc} {exc.__cause__ or ''}"
+            if "RESOURCE_EXHAUSTED" not in text and "ClientError" not in text:
                 raise
-            m = re.search(r"retry in ([\d.]+)s", str(exc))
+            if attempt == tries - 1:
+                raise
+            m = re.search(r"retry in ([\d.]+)s", text)
             wait = float(m.group(1)) + 2 if m else 40
             print(f"  rate limited; sleeping {wait:.0f}s")
             await asyncio.sleep(wait)
@@ -171,20 +175,6 @@ def _avg(rows: list[dict[str, float]]) -> dict[str, float]:
     return {k: round(statistics.mean(r[k] for r in rows), 4) for k in METRIC_KEYS}
 
 
-JUDGE_PROMPT = """You are grading a RAG answer. Reply with ONLY compact JSON:
-{{"faithful": 0 or 1, "correct": 0 or 1}}
-faithful=1 if every claim in the ANSWER is supported by the CONTEXT.
-correct=1 if the ANSWER contains the fact in KEY_FACT.
-
-QUESTION: {q}
-KEY_FACT: {fact}
-CONTEXT:
-{ctx}
-
-ANSWER:
-{ans}"""
-
-
 async def _collect(prompt: str, system: str | None = None) -> str:
     from app.llm.gemini_client import stream_chat
 
@@ -193,6 +183,7 @@ async def _collect(prompt: str, system: str | None = None) -> str:
 
 async def generation_scores(rows: list[dict]) -> dict[str, float]:
     faithful, correct, refused = [], [], 0
+    judge_failures = 0
     for r in rows:
         assembled = build_prompt(
             r["question"], r["final"], similarity_threshold=settings.SIMILARITY_THRESHOLD
@@ -204,19 +195,22 @@ async def generation_scores(rows: list[dict]) -> dict[str, float]:
             continue
         answer = await _collect(assembled.prompt, assembled.system_instruction)
         ctx = "\n".join(c.content for c in assembled.citations)
-        raw = await _collect(
-            JUDGE_PROMPT.format(q=r["question"], fact=r["evidence"], ctx=ctx, ans=answer)
-        )
         try:
-            verdict = json.loads(re.search(r"\{.*\}", raw, re.S).group(0))
-        except (AttributeError, json.JSONDecodeError):
-            verdict = {"faithful": 0, "correct": 0}
-        faithful.append(int(verdict.get("faithful", 0)))
-        correct.append(int(verdict.get("correct", 0)))
+            verdict = await _backoff(judge_answer, r["question"], r["evidence"], ctx, answer)
+            v = {"faithful": int(verdict.faithful), "correct": int(verdict.correct)}
+        except Exception as exc:  # noqa: BLE001 -- count as a failed judgment, keep going
+            print(f"  judge failed for {r['id']}: {type(exc).__name__}")
+            v = {"faithful": 0, "correct": 0}
+            judge_failures += 1
+        faithful.append(v["faithful"])
+        correct.append(v["correct"])
     return {
         "faithfulness": round(statistics.mean(faithful), 4),
         "answer_correct": round(statistics.mean(correct), 4),
         "guardrail_refusals": refused,
+        "judge_failures": judge_failures,
+        "judge_model": judge_model() or "default chain",
+        "judge_rubric": RUBRIC_HASH,
     }
 
 
@@ -276,6 +270,48 @@ async def run_agent(question, qvec, chunks, bm25, stats) -> list[dict]:
     return res.candidates[:K]
 
 
+async def build_contextual_index(chunks: list[dict]) -> list[dict]:
+    """Same chunks, but each embedded as '<LLM context>\n\n<chunk>' (cached)."""
+    from app.ingestion.contextual import contextualize, with_context
+
+    cache = _load_cache("contextual.json")
+    out: list[dict] = []
+    for doc in dict.fromkeys(c["doc"] for c in chunks):
+        mine = [c for c in chunks if c["doc"] == doc]
+        texts = [c["content"] for c in mine]
+        ckey = _key("ctx", settings.EMBEDDING_MODEL, doc, *texts)
+        if ckey not in cache:
+            print(f"contextualizing {len(texts)} chunks for {doc} ...")
+            ctxs = await _backoff(contextualize, "\n".join(texts), texts)
+            embs = await _backoff(embed_chunks, [with_context(x, t) for x, t in zip(ctxs, texts)])
+            cache[ckey] = embs
+            _save_cache("contextual.json", cache)
+        out.extend({**c, "embedding": e} for c, e in zip(mine, cache[ckey], strict=True))
+    return out
+
+
+async def run_extras(question, qvec, chunks, ctx_chunks, bm25) -> dict[str, list[dict]]:
+    """hybrid+rerank, hybrid+hyde, contextual (embeddings with LLM context)."""
+    from app.retrieval.hyde import hypothetical_answer
+    from app.retrieval.llm_rerank import llm_rerank
+
+    base = retrieve(chunks, qvec, question, bm25)
+    pool = base["hybrid_pool"]
+    reranked = await _backoff(
+        lambda q, p: llm_rerank(q, p, text_fn=lambda c: c["content"], strict=True), question, pool
+    )
+    hypo = await _backoff(lambda q: hypothetical_answer(q, strict=True), question)
+    hvec = (await embed_queries([hypo]))[0] if hypo else qvec
+    # HyDE only changes the dense side; BM25 still sees the real question.
+    scored = retrieve(chunks, hvec, question, bm25)["hybrid"]
+    ctx = retrieve(ctx_chunks, qvec, question, bm25)["hybrid"]
+    return {
+        "hybrid+rerank": reranked[:K],
+        "hybrid+hyde": scored,
+        "contextual": ctx,
+    }
+
+
 async def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--generate", action="store_true")
@@ -283,6 +319,11 @@ async def main() -> int:
         "--agentic",
         action="store_true",
         help="also score the LLM-planner agentic variant (uses chat quota)",
+    )
+    ap.add_argument(
+        "--extras",
+        action="store_true",
+        help="also score hybrid+rerank (LLM), hybrid+hyde and contextual (uses LLM quota)",
     )
     ap.add_argument("--limit", type=int)
     ap.add_argument("--compare", type=Path)
@@ -302,7 +343,9 @@ async def main() -> int:
     qvecs = await embed_queries([d["question"] for d in dataset])
 
     bm25 = BM25([c["content"] for c in chunks])
-    scored_variants = [*VARIANTS, *(["agentic"] if args.agentic else [])]
+    extra_names = ["hybrid+rerank", "hybrid+hyde", "contextual"] if args.extras else []
+    scored_variants = [*VARIANTS, *(["agentic"] if args.agentic else []), *extra_names]
+    ctx_chunks = await build_contextual_index(chunks) if args.extras else None
     rows, per = [], {v: [] for v in scored_variants}
     agent_stats = {"errors": 0, "extra_queries": 0}
     for d, qv in zip(dataset, qvecs, strict=True):
@@ -310,6 +353,8 @@ async def main() -> int:
         ranked = retrieve(chunks, qv, d["question"], bm25)
         if args.agentic:
             ranked["agentic"] = await run_agent(d["question"], qv, chunks, bm25, agent_stats)
+        if args.extras:
+            ranked.update(await run_extras(d["question"], qv, chunks, ctx_chunks, bm25))
         for v in scored_variants:
             per[v].append(score(ranked[v], relevant))
         rows.append(

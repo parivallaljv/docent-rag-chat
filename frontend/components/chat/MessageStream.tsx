@@ -5,7 +5,10 @@ import Link from "next/link";
 import { AnimatePresence, motion } from "motion/react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { buildAnswerMarkdown, downloadMarkdown } from "@/lib/exportMarkdown";
 import type { ChatMessageState } from "./ChatWindow";
+import MessageActions, { FactCheck, MemoryProposalCard } from "./MessageActions";
+import type { ProposalDecision } from "@/lib/types";
 
 // Assistant responses come back as markdown (Gemini/Groq both format
 // structured answers with headers, bold, and bullet lists) - render it as
@@ -80,6 +83,7 @@ const markdownComponents: Components = {
 interface MessageStreamProps {
   messages: ChatMessageState[];
   onShowCitations: (message: ChatMessageState) => void;
+  onProposalDecision: (message: ChatMessageState, decision: ProposalDecision) => void;
 }
 
 // How close to the bottom (in px) still counts as "pinned" -- the user
@@ -89,6 +93,7 @@ const NEAR_BOTTOM_THRESHOLD_PX = 80;
 export default function MessageStream({
   messages,
   onShowCitations,
+  onProposalDecision,
 }: MessageStreamProps) {
   const bottomRef = useRef<HTMLDivElement | null>(null);
   // Whether the view should auto-follow new content. Starts pinned (a fresh
@@ -142,11 +147,16 @@ export default function MessageStream({
       onScroll={handleScroll}
     >
       <AnimatePresence initial={false}>
-        {messages.map((message) => (
+        {messages.map((message, index) => (
           <MessageBubble
             key={message.id}
             message={message}
+            question={
+              [...messages.slice(0, index)].reverse().find((m) => m.role === "user")
+                ?.content ?? null
+            }
             onShowCitations={onShowCitations}
+            onProposalDecision={onProposalDecision}
           />
         ))}
       </AnimatePresence>
@@ -157,10 +167,14 @@ export default function MessageStream({
 
 function MessageBubble({
   message,
+  question,
   onShowCitations,
+  onProposalDecision,
 }: {
   message: ChatMessageState;
+  question: string | null;
   onShowCitations: (message: ChatMessageState) => void;
+  onProposalDecision: (message: ChatMessageState, decision: ProposalDecision) => void;
 }) {
   const isUser = message.role === "user";
 
@@ -184,6 +198,15 @@ function MessageBubble({
             : "rounded-tl-sm bg-surface-muted text-foreground"
         }`}
       >
+        {!isUser && message.warning === "possible_prompt_leak" && (
+          <div className="mb-2 flex items-start gap-1.5 rounded-lg bg-warning/10 px-2.5 py-1.5 text-xs text-warning">
+            <span className="material-symbols-outlined mt-px text-[14px]">shield</span>
+            <span>
+              This answer may reveal internal instructions. Treat it with caution.
+            </span>
+          </div>
+        )}
+
         {!isUser && message.status === "waking" && (
           <WakingIndicator />
         )}
@@ -254,6 +277,30 @@ function MessageBubble({
               </span>
             </button>
           )}
+
+        {!isUser && message.status === "done" && message.critique && (
+          <FactCheck claims={message.critique} />
+        )}
+
+        {!isUser && message.status === "done" && message.proposal && (
+          <MemoryProposalCard
+            proposal={message.proposal}
+            onDecide={(decision) => onProposalDecision(message, decision)}
+          />
+        )}
+
+        {!isUser && message.status === "done" && message.content && (
+          <MessageActions
+            content={message.content}
+            messageId={message.messageId}
+            onExport={() =>
+              downloadMarkdown(
+                "answer.md",
+                buildAnswerMarkdown(question, message.content, message.citations)
+              )
+            }
+          />
+        )}
       </div>
     </motion.div>
   );

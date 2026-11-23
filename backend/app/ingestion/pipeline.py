@@ -16,10 +16,14 @@ from typing import Any
 from supabase import Client, create_client
 
 from ..core.config import settings
+from ..core.semantic_cache import semantic_cache
 from ..db import queries
 from ..db.client import get_pool
+from ..tagging import generate_tags
 from .chunker import chunk_pages
+from .contextual import contextualize, with_context
 from .embedder import embed_chunks
+from .figures import describe_figures
 from .ocr import OcrUnavailable, ocr_pdf
 from .parser import extract_document_pages
 
@@ -142,7 +146,21 @@ async def run_ingestion_pipeline(document_id: Any, user_id: Any, storage_path: s
             )
             return
 
-        embeddings = await embed_chunks([c.content for c in text_chunks])
+        if settings.FIGURE_CAPTIONS and storage_path.lower().endswith(".pdf"):
+            figs = await describe_figures(pdf_bytes)
+            if figs:
+                extra = chunk_pages(
+                    figs, target_tokens=settings.CHUNK_TARGET_TOKENS, overlap_ratio=0
+                )
+                for i, c in enumerate(extra):
+                    c.chunk_index = len(text_chunks) + i
+                text_chunks = [*text_chunks, *extra]
+        texts_to_embed = [c.content for c in text_chunks]
+        if settings.CONTEXTUAL_CHUNKS:
+            doc_text = "\n".join(t for _, t in pages) or " ".join(texts_to_embed)
+            contexts = await contextualize(doc_text, texts_to_embed)
+            texts_to_embed = [with_context(x, t) for x, t in zip(contexts, texts_to_embed)]
+        embeddings = await embed_chunks(texts_to_embed)
 
         records = [
             {
@@ -156,6 +174,15 @@ async def run_ingestion_pipeline(document_id: Any, user_id: Any, storage_path: s
         await queries.replace_chunks_and_mark_ready(
             pool, document_id=document_id, user_id=user_id, chunks=records
         )
+        semantic_cache.invalidate_user(user_id)
+        if settings.AUTO_TAGS:
+            try:
+                tags = await generate_tags(storage_path.split("/", 1)[-1], records)
+                await queries.set_document_tags(
+                    pool, user_id=user_id, document_id=document_id, tags=tags
+                )
+            except Exception:  # noqa: BLE001 -- tags are a nicety, never fail ingestion
+                logger.warning("auto-tagging failed for %s", document_id, exc_info=True)
         logger.info("Ingestion complete for document %s: %d chunks", document_id, len(records))
     except Exception as exc:  # noqa: BLE001 - genuinely want to catch everything here
         logger.exception("Ingestion pipeline failed for document %s", document_id)

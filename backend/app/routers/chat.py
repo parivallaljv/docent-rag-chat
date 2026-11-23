@@ -45,7 +45,14 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 
+from .. import memory as memory_mod
+from ..agent.critic import critique_answer
+from ..agent.loop import GeminiToolPlanner, run_tool_agent
+from ..agent.proposals import apply_proposal, proposal_store
+from ..agent.tools import build_tools
+from ..agent.workflow import plan_and_execute
 from ..core.auth import TokenVerificationError, verify_token_claims
+from ..core.background import spawn
 from ..core.config import settings
 from ..core.logging import new_request_id, request_id_var
 from ..core.metrics import RATE_LIMITED, Trace
@@ -54,11 +61,15 @@ from ..core.rate_limit import (
     enforce_gemini_quota,
     is_quota_exhausted_error,
 )
+from ..core.semantic_cache import semantic_cache
+from ..core.tracing import export_trace
 from ..db import queries
 from ..db.client import get_pool
 from ..db.models import ChatMessage, ChatRequest
 from ..ingestion.chunker import approx_token_count
+from ..ingestion.embedder import embed_query
 from ..llm.gemini_client import stream_chat
+from ..llm.routing import route_model
 from ..retrieval import agent as agent_mod
 from ..retrieval import prompt as prompt_mod
 from ..retrieval import search as search_mod
@@ -80,6 +91,21 @@ async def _run_chat_turn_inner(
     caller and handles all framing/turn_id/transport concerns itself."""
     pool = get_pool()
 
+    cache_vec: list[float] | None = None
+    scope = str(payload.document_id) if payload.document_id else None
+    if settings.SEMANTIC_CACHE and not payload.history:
+        try:
+            cache_vec = await embed_query(payload.message)
+            hit = semantic_cache.get(user_id, scope, cache_vec)
+        except Exception:  # noqa: BLE001 -- the cache must never break a turn
+            cache_vec, hit = None, None
+        if hit is not None:
+            trace.attrs["cache_hit"] = True
+            for i in range(0, len(hit.answer), 48):
+                yield ("token", {"content": hit.answer[i : i + 48]})
+            yield ("citations", {"citations": hit.citations})
+            return
+
     try:
         _t = time.perf_counter()
 
@@ -95,7 +121,63 @@ async def _run_chat_turn_inner(
                 history=payload.history if is_original else None,
             )
 
-        if settings.AGENTIC_SEARCH:
+        tool_notes: list[str] = []
+        pending_proposals: list[dict] = []
+        user_memory: str | None = None
+        if settings.USER_MEMORY:
+            try:
+                user_memory = await queries.get_memory(pool, user_id=user_id)
+            except Exception:  # noqa: BLE001 -- migration 008 not applied yet: just skip
+                logger.warning("user_memory unavailable; apply migration 008", exc_info=True)
+        agent_chunks_lack_embeddings = False
+        if settings.AGENTIC_SEARCH and settings.AGENT_MODE == "tools":
+            first = await search_one(payload.message, True)
+
+            async def scoped(query: str, doc_id):
+                return await search_mod.search(
+                    pool,
+                    user_id=user_id,
+                    query_text=query,
+                    document_id=doc_id or payload.document_id,
+                    top_n=settings.RETRIEVAL_TOP_N,
+                )
+
+            tools = build_tools(pool, user_id, scoped, settings.AGENT_PROPOSALS)
+            res = await run_tool_agent(
+                first,
+                tools,
+                GeminiToolPlanner(payload.message, payload.history, tools),
+                max_steps=settings.AGENT_MAX_STEPS,
+                max_calls=settings.AGENT_MAX_TOOL_CALLS,
+                top_n=settings.RETRIEVAL_TOP_N,
+                rrf_k=settings.RRF_K,
+                step_timeout=settings.AGENT_STEP_TIMEOUT,
+            )
+            candidates, tool_notes = res.candidates, res.notes
+            for pr in res.proposals:
+                made = proposal_store.create(user_id, pr["action"], pr["text"])
+                if made is not None:
+                    pending_proposals.append(
+                        {"id": made.id, "action": made.action, "text": made.text}
+                    )
+            agent_chunks_lack_embeddings = True
+            trace.attrs["agent_calls"] = res.calls
+            trace.attrs["agent_steps"] = res.steps
+            if res.error:
+                trace.attrs["agent_error"] = res.error
+        elif settings.AGENTIC_SEARCH and settings.AGENT_MODE == "plan":
+            agent = await plan_and_execute(
+                payload.message,
+                search_one,
+                max_sub=settings.AGENT_MAX_QUERIES - 1,
+                top_n=settings.RETRIEVAL_TOP_N,
+                rrf_k=settings.RRF_K,
+            )
+            candidates = agent.candidates
+            trace.attrs["agent_queries"] = agent.queries
+            if agent.error:
+                trace.attrs["agent_error"] = agent.error
+        elif settings.AGENTIC_SEARCH:
             agent = await agent_mod.agentic_retrieve(search_one, payload.message, payload.history)
             candidates = agent.candidates
             trace.attrs["agent_queries"] = agent.queries
@@ -107,7 +189,7 @@ async def _run_chat_turn_inner(
         trace.mark("retrieve", time.perf_counter() - _t)
         _t = time.perf_counter()
 
-        if settings.MMR_LAMBDA >= 1.0:
+        if settings.MMR_LAMBDA >= 1.0 or agent_chunks_lack_embeddings:
             # Pure relevance: keep search()'s order (cosine, or RRF when hybrid).
             ranked = candidates[: settings.RERANK_TOP_K]
         else:
@@ -119,6 +201,9 @@ async def _run_chat_turn_inner(
                 lambda_mult=settings.MMR_LAMBDA,
             )
 
+        ranked = await search_mod.expand_with_neighbors(
+            pool, user_id, ranked, settings.CHUNK_NEIGHBORS
+        )
         history = [prompt_mod.ChatTurn(role=h.role, content=h.content) for h in payload.history]
         assembled = prompt_mod.build_prompt(
             query=payload.message,
@@ -127,6 +212,8 @@ async def _run_chat_turn_inner(
             similarity_threshold=settings.SIMILARITY_THRESHOLD,
             max_prompt_tokens=settings.MAX_PROMPT_TOKENS,
             history_turns=settings.HISTORY_TURNS,
+            tool_notes=tool_notes,
+            user_memory=user_memory,
         )
         trace.mark("rank_prompt", time.perf_counter() - _t)
     except asyncio.CancelledError:
@@ -148,13 +235,15 @@ async def _run_chat_turn_inner(
 
     trace.attrs["prompt_tokens_approx"] = approx_token_count(assembled.prompt)
     trace.attrs["chunks"] = len(assembled.citations)
+    chat_model = route_model(payload.message)
+    trace.attrs["model"] = chat_model
     answer_parts: list[str] = []
     _gen = time.perf_counter()
     try:
         async for token in stream_chat(
             prompt=assembled.prompt,
             system_instruction=assembled.system_instruction,
-            model=settings.CHAT_MODEL,
+            model=chat_model,
         ):
             if not answer_parts:
                 trace.mark("ttft", time.perf_counter() - _gen)
@@ -214,11 +303,25 @@ async def _run_chat_turn_inner(
         }
         for c in select_cited(assembled.citations, valid)
     ]
+    for pr in pending_proposals:
+        yield ("proposal", pr)
+    if settings.CRITIC_ENABLED and valid:
+        claims = await critique_answer(
+            "".join(answer_parts), select_cited(assembled.citations, valid)
+        )
+        if claims is not None:
+            trace.attrs["critic_unsupported"] = sum(1 for c in claims if not c["supported"])
+            yield ("critique", {"claims": claims})
     payload_out: dict = {"citations": citations}
     if not valid:
         payload_out["warning"] = "no_valid_citations"
     if invalid:
         payload_out["invalid_markers"] = invalid
+    if prompt_mod.leaks_system_prompt("".join(answer_parts)):
+        logger.warning("possible system prompt leak in answer")
+        payload_out["warning"] = "possible_prompt_leak"
+    if cache_vec is not None and valid and not tool_notes:
+        semantic_cache.put(user_id, scope, cache_vec, "".join(answer_parts), citations)
     yield ("citations", payload_out)
 
 
@@ -230,10 +333,10 @@ _TERMINAL_OUTCOMES = {
 }
 
 
-async def _persist(user_id: str, chat_id: Any, role: str, content: str, citations=None) -> None:
+async def _persist(user_id: str, chat_id: Any, role: str, content: str, citations=None):
     """Best-effort save: a DB hiccup must never break a live answer."""
     try:
-        await queries.add_message(
+        return await queries.add_message(
             get_pool(),
             user_id=user_id,
             chat_id=chat_id,
@@ -243,6 +346,7 @@ async def _persist(user_id: str, chat_id: Any, role: str, content: str, citation
         )
     except Exception:
         logger.exception("Failed to persist chat message")
+        return None
 
 
 async def _run_chat_turn(user_id: str, payload: ChatRequest) -> AsyncIterator[tuple[str, dict]]:
@@ -265,11 +369,23 @@ async def _run_chat_turn(user_id: str, payload: ChatRequest) -> AsyncIterator[tu
             rows = await queries.recent_messages(
                 pool, user_id=user_id, chat_id=payload.chat_id, limit=settings.HISTORY_TURNS * 2
             )
-            payload = payload.model_copy(
-                update={
-                    "history": [ChatMessage(role=r["role"], content=r["content"]) for r in rows]
-                }
-            )
+            history_msgs = [ChatMessage(role=r["role"], content=r["content"]) for r in rows]
+            if settings.CHAT_SUMMARY:
+                try:
+                    summary, _ = await queries.get_chat_summary(
+                        pool, user_id=user_id, chat_id=payload.chat_id
+                    )
+                except Exception:  # noqa: BLE001 -- migration 008 not applied yet
+                    summary = None
+                if summary:
+                    history_msgs.insert(
+                        0,
+                        ChatMessage(
+                            role="assistant",
+                            content=f"[Summary of the earlier conversation] {summary}",
+                        ),
+                    )
+            payload = payload.model_copy(update={"history": history_msgs})
             trace.attrs["history_turns"] = len(payload.history)
             await _persist(user_id, payload.chat_id, "user", payload.message)
 
@@ -278,9 +394,13 @@ async def _run_chat_turn(user_id: str, payload: ChatRequest) -> AsyncIterator[tu
             if event == "token":
                 answer.append(data["content"])
             elif payload.chat_id is not None and event == "citations":
-                await _persist(
+                mid = await _persist(
                     user_id, payload.chat_id, "assistant", "".join(answer), data["citations"]
                 )
+                if mid is not None:
+                    data = {**data, "message_id": str(mid)}
+                if settings.CHAT_SUMMARY:
+                    memory_mod.schedule_summary(get_pool(), user_id, payload.chat_id)
             elif payload.chat_id is not None and event == "no_context":
                 await _persist(user_id, payload.chat_id, "assistant", data["message"], [])
             yield event, data
@@ -292,6 +412,33 @@ async def _run_chat_turn(user_id: str, payload: ChatRequest) -> AsyncIterator[tu
         raise
     finally:
         trace.finish(outcome)
+        _after_turn(user_id, trace, outcome, payload.message, "".join(answer))
+
+
+def _after_turn(user_id: str, trace, outcome: str, message: str, answer: str) -> None:
+    """Optional tracing export + usage accounting. Never raises into the turn."""
+    try:
+        export_trace(trace, outcome, prompt_mod.PROMPT_VERSION, message, answer)
+        p = int(trace.attrs.get("prompt_tokens_approx", 0))
+        c = int(trace.attrs.get("completion_tokens_approx", 0))
+        if p or c:
+            cost = (
+                p * settings.COST_PER_1M_INPUT_USD + c * settings.COST_PER_1M_OUTPUT_USD
+            ) / 1_000_000
+            spawn(
+                queries.add_usage(
+                    get_pool(),
+                    user_id=user_id,
+                    kind="chat",
+                    model=trace.attrs.get("model"),
+                    prompt_tokens=p,
+                    completion_tokens=c,
+                    cost_usd=cost,
+                ),
+                "usage accounting",
+            )
+    except Exception:  # noqa: BLE001
+        logger.warning("after-turn bookkeeping failed", exc_info=True)
 
 
 def _parse_chat_request(msg: dict) -> ChatRequest:
@@ -408,6 +555,23 @@ async def chat_ws(websocket: WebSocket) -> None:
 
             if msg_type == "ping":
                 await send({"type": "pong"})
+                continue
+
+            if msg_type in ("approve", "reject"):
+                pid = str(msg.get("proposal_id", ""))[:64]
+                prop = proposal_store.take(user_id, pid)
+                if prop is None:
+                    status = "expired"
+                elif msg_type == "reject":
+                    status = "rejected"
+                else:
+                    try:
+                        await apply_proposal(get_pool(), prop)
+                        status = "saved"
+                    except Exception:  # noqa: BLE001
+                        logger.exception("Could not apply approved proposal")
+                        status = "failed"
+                await send({"type": "proposal_result", "proposal_id": pid, "status": status})
                 continue
 
             if msg_type == "stop":

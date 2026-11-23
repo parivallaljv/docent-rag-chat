@@ -126,3 +126,35 @@ Multi-stage Docker images (non-root, healthcheck), `docker-compose.yml` (local p
 5. Read `agent.py`: this is a minimal tool-calling loop. Compare with LangChain or LlamaIndex agents afterwards.
 6. Read `structured.py`: JSON mode + validation, the pattern behind most "AI features".
 7. Next topics: reranking with a cross-encoder, contextual retrieval, semantic caching, tracing (Langfuse/OpenTelemetry), fine-tuning vs RAG.
+
+---
+
+# Part 2: the v2 concepts
+
+| Term | Meaning | Where |
+|---|---|---|
+| **MCP (Model Context Protocol)** | Open standard for exposing tools/data to AI clients. Write the server once; Claude Desktop/Code/Cursor can all use it | `backend/mcp_server/` |
+| **Tool / function calling** | The model returns "call `calculate('1+1')`" as structured output; your code runs it and returns the result | `app/agent/loop.py` |
+| **Agent loop** | Model picks a tool, sees the result, repeats until done, with step/call caps and a safe fallback | `app/agent/loop.py` |
+| **Plan-and-execute** | Plan sub-questions first, run them in parallel, then combine | `app/agent/workflow.py` |
+| **Critic / self-reflection** | A second model pass checks each claim against the cited sources | `app/agent/critic.py` |
+| **Safe tool use** | Calculator uses an AST allowlist, never `eval`; tool output is untrusted and fenced | `app/agent/calc.py`, `prompt.py` |
+| **HyDE** | Embed a made-up answer instead of the question; answers resemble passages more than questions do | `app/retrieval/hyde.py` |
+| **Reranking** | Re-order retrieved passages with a second, smarter (slower) model | `app/retrieval/llm_rerank.py` |
+| **Contextual retrieval** | Prepend an LLM-written context sentence to each chunk before embedding | `app/ingestion/contextual.py` |
+| **Semantic cache** | Reuse an answer when a new question's embedding is almost identical | `app/core/semantic_cache.py` |
+| **LLM-as-judge** | A model scores answers (faithful? correct?). Beware self-preference and verbosity bias | `eval/judge.py` |
+| **Canary test** | Put a unique string in an attack; if it appears in the answer, the injection worked | `eval/injection.py` |
+| **Feedback loop** | Thumbs-down answers become new eval cases | `eval/export_feedback.py` |
+| **Multimodal** | Models that read images/PDF pages; here, figure and table captions become searchable text | `app/ingestion/figures.py` |
+| **Rolling summary** | Compress old turns into a short summary so long chats fit the prompt | `app/memory.py` |
+| **User memory** | Editable notes injected as fenced context (tone, not facts) | `app/routers/memory.py` |
+| **Tracing (Langfuse)** | Per-turn timeline of stages with token counts and prompt version | `app/core/tracing.py` |
+| **Model routing** | Cheap model for easy questions, strong model for hard ones | `app/llm/routing.py` |
+| **Human-in-the-loop** | The agent proposes a side effect; nothing happens until the user approves. Proposals are single-use, expiring and user-scoped | `app/agent/proposals.py` |
+| **Parent-child chunks** | Match on small chunks, show the model the larger surrounding text | `app/retrieval/search.py` (`merge_neighbors`) |
+| **PII redaction** | Strip emails, phones, cards, keys before text leaves the process | `app/core/pii.py` |
+
+**Reading order for v2:** `app/agent/loop.py` (tool loop) -> `app/agent/tools.py` -> `app/routers/chat.py` (how modes plug in) -> `eval/run_eval.py` `run_extras` (how each idea is measured) -> `mcp_server/server.py` (a 70-line MCP server).
+
+**Lesson from the numbers:** HyDE improved recall; LLM reranking and contextual chunks did not on this small corpus. Fashionable techniques are hypotheses, not upgrades; measure each one on your own data.

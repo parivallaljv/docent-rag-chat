@@ -172,3 +172,63 @@ It helps multi-part questions and is neutral on simple ones, at ~1.6 extra searc
 - **WebSocket**: the server closes the socket (code 1008) when the JWT expires, after any in-flight turn, so the client reconnects with a refreshed token; it answers `{"type":"ping"}` with `{"type":"pong"}`.
 - **HTTP hardening**: explicit CORS methods/headers; Next.js sends `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy`, `Permissions-Policy` and HSTS (no CSP yet).
 - **Tests**: `pytest -m integration` runs `db/queries.py` against a real Postgres (`TEST_DB_URL`; CI starts a pgvector service and applies the migrations).
+
+## MCP server
+
+`backend/mcp_server/` exposes your documents to any MCP client (Claude Desktop, Claude Code, Cursor) over stdio: tools `search_documents`, `list_documents`, `get_document_insight`, plus a `docent://documents` resource. It reuses the API's token verification and per-user queries, so a client only ever sees that user's data.
+
+```bash
+pip install -r backend/requirements-dev.txt   # includes the `mcp` SDK
+# Claude Code:
+claude mcp add docent -e DOCENT_ACCESS_TOKEN=<supabase access token> \
+  -e SUPABASE_DB_URL=... -e SUPABASE_URL=... -e GEMINI_API_KEY=... \
+  -- python -m mcp_server.server   # run from backend/
+```
+
+`DOCENT_ACCESS_TOKEN` is a Supabase access token (it expires, typically after an hour; tools then return an error until you set a fresh one).
+
+## GenAI v2 features
+
+All off by default unless noted; see `backend/.env.example`. Migrations 007 (feedback), 008 (tags, summary, memory) and 009 (usage) must be applied to Supabase for the features that use them (the app degrades gracefully without them).
+
+| Feature | How |
+|---|---|
+| Multi-tool agent | `AGENTIC_SEARCH=true AGENT_MODE=tools`: the model calls `search_documents`, `get_page`, `compare_documents`, `calculate`; the final answer still comes from the grounded, fenced prompt (`backend/app/agent/`) |
+| Plan-and-execute | `AGENT_MODE=plan`: decompose, search in parallel, fuse |
+| Critic | `CRITIC_ENABLED=true`: second pass flags unsupported claims (`critique` event) |
+| HyDE / rerank / contextual chunks / semantic cache | Flags in `.env.example`; measured in `backend/eval/results/extras.json` |
+| Eval 2.0 | `python -m eval.run_eval --extras --generate` (structured LLM judge in `eval/judge.py`), `python -m eval.injection` (6 attacks x 2 questions, canary check), `python -m eval.export_feedback` |
+| Feedback | thumbs up/down -> `POST /messages/{id}/feedback` |
+| Multimodal | `FIGURE_CAPTIONS` indexes figure/table descriptions; browser voice input/read-aloud |
+| Document intelligence | `POST /documents/compare`, auto-tags, follow-up suggestions (`POST /chats/{id}/suggestions`), Markdown export |
+| Memory | rolling chat summary (`CHAT_SUMMARY`), editable user memory (`/memory`) |
+| LLMOps | `GET /usage`, opt-in Langfuse tracing (metadata only by default), model routing, PII redaction, prompt-leak warning, optional Ollama fallback |
+
+### Measured retrieval results (33 questions, 35 chunks, free-tier lite models)
+
+| Variant | hit@5 | recall@5 | MRR | nDCG@5 |
+|---|---|---|---|---|
+| hybrid (default) | 0.909 | 0.808 | 0.670 | 0.662 |
+| + HyDE | **0.970** | **0.909** | 0.668 | **0.703** |
+| + LLM rerank | 0.879 | 0.793 | 0.523 | 0.571 |
+| contextual chunks | 0.849 | 0.758 | 0.631 | 0.635 |
+
+HyDE helps recall (multi-hop recall@5 0.574 -> 0.778) at +1 LLM call per question. LLM rerank and contextual chunks did not help on this small corpus, so they stay off. Treat differences of a few points as noise at this sample size. Prompt-injection set: 12/12 resisted.
+
+### Human-in-the-loop and parent-child context
+
+- `AGENT_PROPOSALS=true` (with `AGENT_MODE=tools`): the agent can *propose* saving a short note about the user to their memory. The server stores the proposal (10-minute TTL, single use, user-scoped), sends a `proposal` event, and acts only when the client sends `approve` over the WebSocket. Only one action exists (`save_memory_note`); anything else is rejected.
+- `CHUNK_NEIGHBORS=1`: each retrieved chunk is shown to the model together with its neighbouring chunks (more surrounding context), while citations still show the matched chunk. Not measured in the eval harness (it changes context, not ranking), so it is off by default.
+
+### Deliberately not built
+Hosted cross-encoder reranker and web-search tool (need third-party keys), embedding fine-tuning (needs a training stack), Playwright end-to-end test (needs a live Supabase login).
+
+### Applying database migrations
+
+```bash
+cd backend
+python -m scripts.apply_migrations --dry-run   # list what would run
+python -m scripts.apply_migrations             # apply pending migrations (tracked in public.schema_migrations)
+```
+
+An existing database whose migrations 001-004 were run by hand is detected and baselined automatically. Supabase free projects pause after about 7 idle days; the keep-alive workflow (set the `BACKEND_URL` repo variable) now also calls `/health/db`, which runs `SELECT 1` so the database sees activity.

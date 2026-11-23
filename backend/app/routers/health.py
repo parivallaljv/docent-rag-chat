@@ -8,6 +8,7 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from ..core.config import settings
 from ..core.rate_limit import quota_status
+from ..db.client import get_pool
 
 router = APIRouter(tags=["health"])
 
@@ -15,6 +16,19 @@ router = APIRouter(tags=["health"])
 @router.get("/health")
 async def health() -> dict:
     return {"status": "ok"}
+
+
+@router.get("/health/db")
+async def health_db() -> dict:
+    """Runs SELECT 1. Hit on a schedule it also counts as database activity, which
+    keeps a free-tier Supabase project from being paused for inactivity."""
+    try:
+        pool = get_pool()
+        async with pool.acquire() as conn:
+            await conn.fetchval("SELECT 1")
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail="database unavailable") from exc
+    return {"status": "ok", "db": "ok"}
 
 
 @router.get("/status")

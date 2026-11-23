@@ -263,14 +263,14 @@ async def add_message(
     role: str,
     content: str,
     citations: list[dict] | None = None,
-) -> None:
-    """Append a message, bump the chat's updated_at, and title a still-untitled
-    chat from its first user message. One transaction."""
+) -> Any:
+    """Append a message (returns its id), bump the chat's updated_at, and title
+    a still-untitled chat from its first user message. One transaction."""
     uid, cid = _as_uuid(user_id), _as_uuid(chat_id)
     async with pool.acquire() as conn, conn.transaction():
-        await conn.execute(
+        message_id = await conn.fetchval(
             "INSERT INTO messages (chat_id, user_id, role, content, citations) "
-            "VALUES ($1, $2, $3, $4, $5::jsonb)",
+            "VALUES ($1, $2, $3, $4, $5::jsonb) RETURNING id",
             cid,
             uid,
             role,
@@ -288,6 +288,169 @@ async def add_message(
                 " ".join(content.split())[:60] or DEFAULT_CHAT_TITLE,
                 DEFAULT_CHAT_TITLE,
             )
+    return message_id
+
+
+# --- feedback ------------------------------------------------------------------
+
+
+async def upsert_feedback(
+    pool: asyncpg.Pool, *, user_id: Any, message_id: Any, rating: int, comment: str | None
+) -> bool:
+    """Record a rating for one of the user's own assistant messages. Returns
+    False if the message doesn't exist / isn't theirs / isn't an assistant turn."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "INSERT INTO message_feedback (message_id, user_id, rating, comment) "
+            "SELECT m.id, m.user_id, $3, $4 FROM messages m "
+            "WHERE m.id = $1 AND m.user_id = $2 AND m.role = 'assistant' "
+            "ON CONFLICT (message_id, user_id) DO UPDATE "
+            "SET rating = EXCLUDED.rating, comment = EXCLUDED.comment, created_at = now() "
+            "RETURNING message_id",
+            _as_uuid(message_id),
+            _as_uuid(user_id),
+            rating,
+            comment,
+        )
+    return row is not None
+
+
+# --- tags, summary, memory ------------------------------------------------------
+
+
+async def set_document_tags(pool: asyncpg.Pool, *, user_id: Any, document_id: Any, tags: list[str]):
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE documents SET tags = $3 WHERE id = $1 AND user_id = $2",
+            _as_uuid(document_id),
+            _as_uuid(user_id),
+            tags,
+        )
+
+
+async def get_chat_summary(pool: asyncpg.Pool, *, user_id: Any, chat_id: Any):
+    """(summary | None, summary_upto | None)"""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT summary, summary_upto FROM chats WHERE id = $1 AND user_id = $2",
+            _as_uuid(chat_id),
+            _as_uuid(user_id),
+        )
+    return (row["summary"], row["summary_upto"]) if row else (None, None)
+
+
+async def set_chat_summary(
+    pool: asyncpg.Pool, *, user_id: Any, chat_id: Any, summary: str, upto: Any
+) -> None:
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE chats SET summary = $3, summary_upto = $4 WHERE id = $1 AND user_id = $2",
+            _as_uuid(chat_id),
+            _as_uuid(user_id),
+            summary,
+            upto,
+        )
+
+
+async def get_memory(pool: asyncpg.Pool, *, user_id: Any) -> str | None:
+    async with pool.acquire() as conn:
+        return await conn.fetchval(
+            "SELECT content FROM user_memory WHERE user_id = $1", _as_uuid(user_id)
+        )
+
+
+async def upsert_memory(pool: asyncpg.Pool, *, user_id: Any, content: str) -> None:
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO user_memory (user_id, content) VALUES ($1, $2) "
+            "ON CONFLICT (user_id) DO UPDATE SET content = EXCLUDED.content, updated_at = now()",
+            _as_uuid(user_id),
+            content,
+        )
+
+
+async def delete_memory(pool: asyncpg.Pool, *, user_id: Any) -> None:
+    async with pool.acquire() as conn:
+        await conn.execute("DELETE FROM user_memory WHERE user_id = $1", _as_uuid(user_id))
+
+
+# --- neighbouring chunks (parent-child context) -----------------------------------
+
+
+async def get_neighbor_chunks(
+    pool: asyncpg.Pool, *, user_id: Any, wanted: list[tuple[Any, int]], radius: int
+):
+    """Chunks within `radius` of each (document_id, chunk_index), for this user."""
+    if not wanted:
+        return []
+    doc_ids = [_as_uuid(d) for d, _ in wanted]
+    lows = [max(0, i - radius) for _, i in wanted]
+    highs = [i + radius for _, i in wanted]
+    async with pool.acquire() as conn:
+        return await conn.fetch(
+            "SELECT DISTINCT c.document_id, c.chunk_index, c.content FROM chunks c "
+            "JOIN unnest($2::uuid[], $3::int[], $4::int[]) AS w(doc, lo, hi) "
+            "ON c.document_id = w.doc AND c.chunk_index BETWEEN w.lo AND w.hi "
+            "WHERE c.user_id = $1 ORDER BY c.document_id, c.chunk_index",
+            _as_uuid(user_id),
+            doc_ids,
+            lows,
+            highs,
+        )
+
+
+# --- usage ---------------------------------------------------------------------
+
+
+async def add_usage(
+    pool: asyncpg.Pool,
+    *,
+    user_id: Any,
+    kind: str,
+    model: str | None,
+    prompt_tokens: int,
+    completion_tokens: int,
+    cost_usd: float,
+) -> None:
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO usage_events (user_id, kind, model, prompt_tokens, completion_tokens, "
+            "cost_usd) VALUES ($1, $2, $3, $4, $5, $6)",
+            _as_uuid(user_id),
+            kind,
+            model,
+            prompt_tokens,
+            completion_tokens,
+            cost_usd,
+        )
+
+
+async def usage_summary(pool: asyncpg.Pool, *, user_id: Any, days: int = 30):
+    """(totals dict, [per-day dicts]) for the last `days` days."""
+    uid = _as_uuid(user_id)
+    async with pool.acquire() as conn:
+        t = await conn.fetchrow(
+            "SELECT count(*) AS turns, coalesce(sum(prompt_tokens),0) AS prompt_tokens, "
+            "coalesce(sum(completion_tokens),0) AS completion_tokens, "
+            "coalesce(sum(cost_usd),0) AS cost_usd FROM usage_events "
+            "WHERE user_id = $1 AND created_at >= now() - make_interval(days => $2)",
+            uid,
+            days,
+        )
+        rows = await conn.fetch(
+            "SELECT created_at::date AS day, count(*) AS turns, "
+            "sum(prompt_tokens) AS prompt_tokens, sum(completion_tokens) AS completion_tokens, "
+            "sum(cost_usd) AS cost_usd FROM usage_events "
+            "WHERE user_id = $1 AND created_at >= now() - make_interval(days => $2) "
+            "GROUP BY 1 ORDER BY 1",
+            uid,
+            days,
+        )
+    totals = {**dict(t), "cost_usd": float(t["cost_usd"])}
+    daily = [
+        {**dict(r), "day": r["day"].isoformat(), "cost_usd": float(r["cost_usd"])} for r in rows
+    ]
+    return totals, daily
 
 
 # --- document insights ---------------------------------------------------------
@@ -308,7 +471,7 @@ async def get_document_chunks(
 ):
     async with pool.acquire() as conn:
         return await conn.fetch(
-            "SELECT page_number, chunk_index, content FROM chunks "
+            "SELECT id, page_number, chunk_index, content FROM chunks "
             "WHERE document_id = $1 AND user_id = $2 ORDER BY chunk_index LIMIT $3",
             _as_uuid(document_id),
             _as_uuid(user_id),

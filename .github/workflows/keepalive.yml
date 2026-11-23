@@ -1,5 +1,6 @@
 name: Keep-alive
-# Pings the free-tier backend so it doesn't cold-start. Set repo variable
+# Pings the free-tier backend so it doesn't cold-start, and /health/db so the
+# Supabase free tier sees database activity (it pauses after ~7 idle days). Set repo variable
 # BACKEND_URL (e.g. https://docent-rag-chat.onrender.com) to enable.
 on:
   schedule:
@@ -14,3 +15,4 @@ jobs:
         run: |
           if [ -z "$URL" ]; then echo "BACKEND_URL not set; skipping"; exit 0; fi
           curl -fsS --max-time 60 "$URL/health"
+          curl -fsS --max-time 60 "$URL/health/db"

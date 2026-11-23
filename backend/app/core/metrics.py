@@ -6,6 +6,7 @@ from __future__ import annotations
 import logging
 import time
 from contextlib import contextmanager
+from datetime import UTC, datetime
 
 from prometheus_client import Counter, Histogram
 
@@ -30,6 +31,7 @@ class Trace:
         self.stages: dict[str, float] = {}
         self.attrs: dict = dict(attrs)
         self._t0 = time.perf_counter()
+        self.started_at = datetime.now(UTC)
 
     @contextmanager
     def stage(self, name: str):

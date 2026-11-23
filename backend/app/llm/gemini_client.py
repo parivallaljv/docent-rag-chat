@@ -78,8 +78,10 @@ async def _open_groq_connection(
     prompt: str,
     system_instruction: str | None,
     temperature: float,
+    url: str = _GROQ_CHAT_URL,
+    api_key: str | None = None,
 ) -> AsyncIterator[str]:
-    """Open a Groq chat-completions stream and return an async iterator of
+    """Open an OpenAI-compatible (Groq/Ollama) chat-completions stream and return an async iterator of
     plain text deltas. Raises UpstreamChatError immediately on a non-2xx
     response -- httpx.AsyncClient.send(..., stream=True) already waits for
     the response headers/status before returning, so (unlike the Gemini SDK
@@ -93,8 +95,8 @@ async def _open_groq_connection(
     client = httpx.AsyncClient(timeout=_CONNECT_TIMEOUT_SECONDS)
     request = client.build_request(
         "POST",
-        _GROQ_CHAT_URL,
-        headers={"Authorization": f"Bearer {settings.GROQ_API_KEY}"},
+        url,
+        headers={"Authorization": f"Bearer {api_key or settings.GROQ_API_KEY}"},
         json={
             "model": model,
             "messages": messages,
@@ -196,6 +198,8 @@ async def stream_chat(
     candidates += [("gemini", m) for m in settings.chat_model_fallbacks_list]
     if settings.GROQ_API_KEY:
         candidates.append(("groq", settings.GROQ_MODEL))
+    if settings.OLLAMA_BASE_URL:
+        candidates.append(("ollama", settings.OLLAMA_MODEL))
 
     stream_iter = None
     first_chunk = None
@@ -228,6 +232,15 @@ async def stream_chat(
                         system_instruction=system_instruction,
                         temperature=temperature,
                         max_retries=0,
+                        **(
+                            {
+                                "url": settings.OLLAMA_BASE_URL.rstrip("/")
+                                + "/v1/chat/completions",
+                                "api_key": "ollama",
+                            }
+                            if provider == "ollama"
+                            else {}
+                        ),
                     ),
                     timeout=_time_left(),
                 )

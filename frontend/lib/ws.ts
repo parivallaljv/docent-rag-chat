@@ -1,6 +1,15 @@
 import { getSupabaseBrowserClient } from "./supabaseClient";
 import { API_URL } from "./api";
-import type { ChatCitation, ChatHistoryTurn } from "./types";
+import type {
+  ChatCitation,
+  ChatHistoryTurn,
+  CitationsMeta,
+  CritiqueClaim,
+  MemoryProposal,
+  ProposalDecision,
+  ProposalStatus,
+} from "./types";
+import { dispatchTurnEvent, parseServerEvent } from "./wsEvents";
 
 /**
  * Persistent WebSocket client for /chat/ws, replacing the old one-fetch-
@@ -18,8 +27,10 @@ import type { ChatCitation, ChatHistoryTurn } from "./types";
  *   -> {"type":"auth","token":"..."}
  *   -> {"type":"message","turn_id":"...","message":"...","document_id":...,"history":[...]}
  *   -> {"type":"stop","turn_id":"..."}
+ *   -> {"type":"approve"|"reject","proposal_id":"..."}
  *   <- {"type":"auth_ok"} | {"type":"auth_error","message":"..."}
- *   <- {"type":"token"|"citations"|"no_context"|"error"|"quota_exceeded"|"stopped"|"turn_end", "turn_id":"...", ...}
+ *   <- {"type":"token"|"citations"|"no_context"|"error"|"quota_exceeded"|"stopped"|"turn_end"|"proposal", "turn_id":"...", ...}
+ *   <- {"type":"proposal_result","proposal_id":"...","status":"saved"|"rejected"|"expired"|"failed"}
  */
 
 export interface ChatStreamRequest {
@@ -39,7 +50,12 @@ export interface ChatSocketCallbacks {
   /** Fires once per streamed token/text chunk, in order. */
   onToken: (token: string) => void;
   /** Fires once, with the final citations list, on a successful turn. */
-  onCitations: (citations: ChatCitation[]) => void;
+  onCitations: (citations: ChatCitation[], meta?: CitationsMeta) => void;
+  /** Fires (before onCitations) when the answer critic's fact check arrives. */
+  onCritique?: (claims: CritiqueClaim[]) => void;
+  /** Fires (before onCitations) when the assistant proposes saving a memory
+   * note. Nothing is saved until the user answers via respondToProposal(). */
+  onProposal?: (proposal: MemoryProposal) => void;
   /**
    * Fires on any error for this turn. `kind` distinguishes how to frame it:
    *  - "auth": the session was rejected/expired during the WS handshake.
@@ -80,6 +96,7 @@ class ChatSocket {
   private reconnectAttempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private connectPromise: Promise<void> | null = null;
+  private proposalListeners = new Map<string, (status: ProposalStatus) => void>();
 
   /** Resolves once the socket is authenticated and ready to send, opening a
    * new connection first if none is in progress. */
@@ -185,39 +202,30 @@ class ChatSocket {
   }
 
   private _routeMessage(data: Record<string, unknown>) {
-    const turnId = typeof data.turn_id === "string" ? data.turn_id : undefined;
-    if (!turnId) return;
-    const turn = this.pendingTurns.get(turnId);
+    const event = parseServerEvent(data);
+    if (!event) return;
+
+    if (event.type === "proposal_result") {
+      // Not tied to a turn (the turn has usually ended by the time the user
+      // answers), so it's matched by proposal id instead.
+      const listener = this.proposalListeners.get(event.proposalId);
+      this.proposalListeners.delete(event.proposalId);
+      listener?.(event.status);
+      return;
+    }
+
+    const turn = this.pendingTurns.get(event.turnId);
     if (!turn) return;
 
-    switch (data.type) {
-      case "token":
-        if (typeof data.content === "string") turn.callbacks.onToken(data.content);
-        break;
-      case "citations":
-        turn.callbacks.onCitations(Array.isArray(data.citations) ? (data.citations as ChatCitation[]) : []);
-        break;
-      case "no_context":
-      case "error":
-        turn.callbacks.onError(typeof data.message === "string" ? data.message : "Something went wrong.");
-        break;
-      case "quota_exceeded":
-        turn.callbacks.onError(
-          typeof data.message === "string" ? data.message : "Daily AI budget exhausted.",
-          "quota_exceeded"
-        );
-        break;
-      case "stopped":
-        turn.callbacks.onStopped?.();
-        break;
-      case "turn_end":
-        if (!turn.ended) {
-          turn.ended = true;
-          turn.callbacks.onTurnEnd();
-        }
-        this.pendingTurns.delete(turnId);
-        break;
+    if (event.type === "turn_end") {
+      if (!turn.ended) {
+        turn.ended = true;
+        turn.callbacks.onTurnEnd();
+      }
+      this.pendingTurns.delete(event.turnId);
+      return;
     }
+    dispatchTurnEvent(event, turn.callbacks);
   }
 
   private _flushQueue() {
@@ -236,9 +244,35 @@ class ChatSocket {
         turn.callbacks.onTurnEnd();
       }
     }
+    this._failAllProposals();
     const queued = this.sendQueue;
     this.sendQueue = [];
     void queued; // queued sends are simply dropped; their turns were already failed above
+  }
+
+  private _failAllProposals() {
+    const listeners = Array.from(this.proposalListeners.values());
+    this.proposalListeners.clear();
+    listeners.forEach((listener) => listener("failed"));
+  }
+
+  /** Answers a memory proposal. `onResult` fires once with the server's
+   * `proposal_result` status, or "failed" if it can't be delivered. */
+  respondToProposal(
+    proposalId: string,
+    decision: ProposalDecision,
+    onResult: (status: ProposalStatus) => void
+  ): void {
+    this.proposalListeners.set(proposalId, onResult);
+    this.ensureReady()
+      .then(() => {
+        if (this.status !== "ready" || !this.ws) throw new Error("not connected");
+        this.ws.send(JSON.stringify({ type: decision, proposal_id: proposalId }));
+      })
+      .catch(() => {
+        // _failAllProposals may already have reported this one.
+        if (this.proposalListeners.delete(proposalId)) onResult("failed");
+      });
   }
 
   send(turnId: string, request: ChatStreamRequest, callbacks: ChatSocketCallbacks): void {
@@ -334,4 +368,13 @@ export function sendChatMessage(
   const socket = getChatSocket();
   socket.send(turnId, request, callbacks);
   return { stop: () => socket.stop(turnId) };
+}
+
+/** Approves or dismisses a proposed memory note over the shared connection. */
+export function respondToProposal(
+  proposalId: string,
+  decision: ProposalDecision,
+  onResult: (status: ProposalStatus) => void
+): void {
+  getChatSocket().respondToProposal(proposalId, decision, onResult);
 }

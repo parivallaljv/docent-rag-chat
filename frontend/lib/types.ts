@@ -13,6 +13,8 @@ export interface DocumentRecord {
   status: DocumentStatus;
   page_count: number | null;
   error_message?: string | null;
+  /** Auto-generated topic tags; absent until the tags migration is applied. */
+  tags?: string[];
   created_at: string;
 }
 
@@ -77,3 +79,64 @@ export type InsightResponse =
   | { kind: "summary"; cached: boolean; result: SummaryResult }
   | { kind: "key_facts"; cached: boolean; result: KeyFactsResult }
   | { kind: "quiz"; cached: boolean; result: QuizResult };
+
+export interface CritiqueClaim {
+  claim: string;
+  supported: boolean;
+  /** The [n] excerpt number backing the claim, when there is one. */
+  excerpt: number | null;
+}
+
+export type ChatWarning = "possible_prompt_leak" | "no_valid_citations";
+
+export interface CitationsMeta {
+  messageId?: string;
+  warning?: ChatWarning | string;
+}
+
+/** A memory note the assistant proposes saving; nothing is stored until the
+ * user approves it. */
+export interface MemoryProposal {
+  id: string;
+  action: "save_memory_note";
+  text: string;
+}
+
+export type ProposalStatus = "saved" | "rejected" | "expired" | "failed";
+
+export type ProposalDecision = "approve" | "reject";
+
+export interface CompareSource {
+  filename: string;
+  page: number;
+  snippet: string;
+}
+
+export interface CompareResponse {
+  document_a: string;
+  document_b: string;
+  topic: string;
+  similarities: string[];
+  differences: string[];
+  sources: CompareSource[];
+}
+
+export interface UsageDay {
+  day: string;
+  turns: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  cost_usd: number;
+}
+
+export interface UsageResponse {
+  days: number;
+  totals: {
+    turns: number;
+    prompt_tokens: number;
+    completion_tokens: number;
+    cost_usd: number;
+  };
+  daily: UsageDay[];
+  note?: string;
+}

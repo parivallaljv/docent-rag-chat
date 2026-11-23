@@ -96,3 +96,8 @@ class StoredMessage(BaseModel):
     content: str
     citations: list[dict] | None = None
     created_at: datetime
+
+
+class FeedbackRequest(BaseModel):
+    rating: Literal[-1, 1]
+    comment: str | None = Field(default=None, max_length=1000)

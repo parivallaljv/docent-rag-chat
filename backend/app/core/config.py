@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     # fallback (not the primary model -- see CHAT_MODEL above) since it's
     # otherwise the most likely of these to be quota-exhausted first.
     # Comma-separated, parsed like ALLOWED_ORIGINS below.
-    CHAT_MODEL_FALLBACKS: str = "gemini-3.7-flash,gemini-flash-latest"
+    CHAT_MODEL_FALLBACKS: str = "gemini-3.7-flash,gemini-3.5-flash,gemini-3.5-flash-lite"
     EMBEDDING_MODEL: str = "gemini-embedding-001"
     EMBEDDING_DIM: int = 768
     # Empirically measured (2026-09-07): a single model's real free-tier
@@ -119,6 +119,53 @@ class Settings(BaseSettings):
     AGENT_MAX_ROUNDS: int = 2
     AGENT_MAX_QUERIES: int = 4  # total searches incl. the original question
     AGENT_STEP_TIMEOUT: float = 10.0
+    # With AGENTIC_SEARCH on: "search" (query refinement), "tools" (multi-tool
+    # loop: search/get_page/compare/calculate) or "plan" (plan-and-execute).
+    # --- Retrieval upgrades (each measured in eval/; all default off) ---
+    RERANKER: str = ""  # "" | "llm" (listwise LLM rerank of the fused candidates)
+    RERANK_MODEL: str = ""
+    RERANK_TIMEOUT_SECONDS: float = 15.0
+    HYDE: bool = False  # embed an LLM-written hypothetical answer for dense search
+    HYDE_MODEL: str = ""
+    HYDE_TIMEOUT_SECONDS: float = 10.0
+    CONTEXTUAL_CHUNKS: bool = False  # LLM context sentence prepended before embedding
+    CONTEXT_MODEL: str = ""
+    SEMANTIC_CACHE: bool = False  # reuse answers for near-identical single-turn questions
+    SEMANTIC_CACHE_THRESHOLD: float = 0.95
+    SEMANTIC_CACHE_TTL_SECONDS: float = 3600.0
+    # --- Multimodal / memory features (default off unless noted) ---
+    FIGURE_CAPTIONS: bool = False  # describe figures/tables with a vision model at ingestion
+    FIGURE_MODEL: str = ""
+    AUTO_TAGS: bool = False  # LLM topic tags per document after ingestion
+    CHAT_SUMMARY: bool = False  # rolling summary of long chats
+    USER_MEMORY: bool = True  # inject the user's own memory notes (no LLM cost)
+    # --- LLMOps ---
+    # Tracing (opt-in). Metadata only unless LANGFUSE_CAPTURE_CONTENT=true (PII-redacted).
+    LANGFUSE_HOST: str = "https://cloud.langfuse.com"
+    LANGFUSE_PUBLIC_KEY: str = ""
+    LANGFUSE_SECRET_KEY: str = ""
+    LANGFUSE_CAPTURE_CONTENT: bool = False
+    # Usage/cost accounting: price per 1M approximate tokens (0 = free tier).
+    COST_PER_1M_INPUT_USD: float = 0.0
+    COST_PER_1M_OUTPUT_USD: float = 0.0
+    # Model routing: fast model for simple questions, strong for analytical ones.
+    ROUTING_ENABLED: bool = False
+    CHAT_MODEL_FAST: str = ""
+    CHAT_MODEL_STRONG: str = ""
+    # Optional local model (Ollama OpenAI-compatible API) as a last fallback.
+    OLLAMA_BASE_URL: str = ""  # e.g. http://localhost:11434
+    OLLAMA_MODEL: str = "llama3.2"
+    AGENT_PROPOSALS: bool = False  # let the tools agent propose actions (user must approve)
+    CHUNK_NEIGHBORS: int = (
+        0  # parent-child: add this many neighbouring chunks per side to each excerpt
+    )
+    AGENT_MODE: str = "search"
+    AGENT_MAX_STEPS: int = 3
+    AGENT_MAX_TOOL_CALLS: int = 6
+    # Critic: second LLM pass that flags unsupported claims in an answer.
+    CRITIC_ENABLED: bool = False
+    CRITIC_MODEL: str = ""
+    CRITIC_TIMEOUT_SECONDS: float = 20.0
 
     # Model for structured features (summary/key facts/quiz); empty = CHAT_MODEL chain.
     INSIGHTS_MODEL: str = ""

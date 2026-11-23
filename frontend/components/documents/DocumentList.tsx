@@ -14,6 +14,7 @@ export default function DocumentList() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
+  const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [insight, setInsight] = useState<{ doc: DocumentRecord; kind: InsightKind } | null>(null);
 
   async function handleRetry(id: string) {
@@ -147,11 +148,15 @@ export default function DocumentList() {
     );
   }
 
-  const filtered = filter.trim()
-    ? documents.filter((doc) =>
-        doc.filename.toLowerCase().includes(filter.trim().toLowerCase())
-      )
-    : documents;
+  const allTags = Array.from(new Set(documents.flatMap((doc) => doc.tags ?? []))).sort();
+  const activeTag = tagFilter && allTags.includes(tagFilter) ? tagFilter : null;
+
+  const filtered = documents.filter(
+    (doc) =>
+      (!filter.trim() ||
+        doc.filename.toLowerCase().includes(filter.trim().toLowerCase())) &&
+      (!activeTag || (doc.tags ?? []).includes(activeTag))
+  );
 
   return (
     <div className="overflow-hidden rounded-2xl bg-surface shadow-card">
@@ -172,6 +177,26 @@ export default function DocumentList() {
           {documents.length} document{documents.length === 1 ? "" : "s"}
         </span>
       </div>
+      {allTags.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 border-b border-border px-4 py-2.5">
+          <span className="mr-1 text-xs font-medium text-muted">Tags</span>
+          {allTags.map((tag) => (
+            <button
+              key={tag}
+              type="button"
+              aria-pressed={activeTag === tag}
+              onClick={() => setTagFilter(activeTag === tag ? null : tag)}
+              className={`rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors ${
+                activeTag === tag
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-surface-muted text-muted hover:bg-primary/10 hover:text-primary"
+              }`}
+            >
+              {tag}
+            </button>
+          ))}
+        </div>
+      )}
       <ul className="divide-y divide-border">
         {filtered.map((doc) => (
           <li
@@ -196,6 +221,24 @@ export default function DocumentList() {
                   {new Date(doc.created_at).toLocaleString()}
                   {doc.page_count ? ` · ${doc.page_count} pages` : ""}
                 </p>
+                {doc.tags && doc.tags.length > 0 && (
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {doc.tags.map((tag) => (
+                      <button
+                        key={tag}
+                        type="button"
+                        onClick={() => setTagFilter(activeTag === tag ? null : tag)}
+                        className={`rounded-full px-2 py-0.5 text-[11px] font-medium transition-colors ${
+                          activeTag === tag
+                            ? "bg-primary text-primary-foreground"
+                            : "bg-surface-muted text-muted hover:bg-primary/10 hover:text-primary"
+                        }`}
+                      >
+                        {tag}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 {doc.status === "failed" && doc.error_message && (
                   <p className="mt-0.5 flex items-center gap-1 text-xs text-danger">
                     <span className="material-symbols-outlined text-[14px]">warning</span>
@@ -243,7 +286,9 @@ export default function DocumentList() {
         ))}
         {filtered.length === 0 && (
           <li className="px-5 py-8 text-center text-sm text-muted">
-            No documents match &ldquo;{filter}&rdquo;.
+            {filter.trim()
+              ? <>No documents match &ldquo;{filter}&rdquo;.</>
+              : "No documents have this tag."}
           </li>
         )}
       </ul>
