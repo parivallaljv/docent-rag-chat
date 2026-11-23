@@ -1,6 +1,6 @@
 import { getSupabaseBrowserClient } from "./supabaseClient";
 import { API_URL } from "./api";
-import type { ChatCitation, ChatHistoryTurn } from "./types";
+import type { ChatCitation, ChatHistoryTurn, CitationsMeta, CritiqueClaim } from "./types";
 
 /**
  * Persistent WebSocket client for /chat/ws, replacing the old one-fetch-
@@ -39,7 +39,9 @@ export interface ChatSocketCallbacks {
   /** Fires once per streamed token/text chunk, in order. */
   onToken: (token: string) => void;
   /** Fires once, with the final citations list, on a successful turn. */
-  onCitations: (citations: ChatCitation[]) => void;
+  onCitations: (citations: ChatCitation[], meta?: CitationsMeta) => void;
+  /** Fires (before onCitations) when the answer critic's fact check arrives. */
+  onCritique?: (claims: CritiqueClaim[]) => void;
   /**
    * Fires on any error for this turn. `kind` distinguishes how to frame it:
    *  - "auth": the session was rejected/expired during the WS handshake.
@@ -195,7 +197,29 @@ class ChatSocket {
         if (typeof data.content === "string") turn.callbacks.onToken(data.content);
         break;
       case "citations":
-        turn.callbacks.onCitations(Array.isArray(data.citations) ? (data.citations as ChatCitation[]) : []);
+        turn.callbacks.onCitations(
+          Array.isArray(data.citations) ? (data.citations as ChatCitation[]) : [],
+          {
+            messageId: typeof data.message_id === "string" ? data.message_id : undefined,
+            warning: typeof data.warning === "string" ? data.warning : undefined,
+          }
+        );
+        break;
+      case "critique":
+        if (Array.isArray(data.claims)) {
+          const claims = (data.claims as unknown[]).flatMap((raw): CritiqueClaim[] => {
+            const c = raw as Partial<CritiqueClaim> | null;
+            if (!c || typeof c.claim !== "string") return [];
+            return [
+              {
+                claim: c.claim,
+                supported: c.supported === true,
+                excerpt: typeof c.excerpt === "number" ? c.excerpt : null,
+              },
+            ];
+          });
+          if (claims.length > 0) turn.callbacks.onCritique?.(claims);
+        }
         break;
       case "no_context":
       case "error":

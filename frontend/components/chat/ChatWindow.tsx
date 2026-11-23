@@ -7,13 +7,20 @@ import {
   deleteChat,
   getChatMessages,
   getDocuments,
+  getSuggestions,
   listChats,
 } from "@/lib/api";
 import { prewarmChatSocket, sendChatMessage } from "@/lib/ws";
+import {
+  getSpeechRecognitionCtor,
+  useSpeechRecognitionSupported,
+  type SpeechRecognitionLike,
+} from "@/lib/speech";
 import type {
   ChatCitation,
   ChatHistoryTurn,
   ChatSummary,
+  CritiqueClaim,
   DocumentRecord,
 } from "@/lib/types";
 import MessageStream from "./MessageStream";
@@ -33,6 +40,10 @@ export interface ChatMessageState {
   content: string;
   status?: MessageStatus;
   citations?: ChatCitation[];
+  /** Server-side id, once known (used for feedback). */
+  messageId?: string;
+  critique?: CritiqueClaim[];
+  warning?: string;
   errorMessage?: string;
   /** Set for a connection/auth/quota-level failure (as opposed to a
    * backend-authored `error`/`no_context` message, which needs no special
@@ -72,6 +83,15 @@ export default function ChatWindow({ documentId, initialChatId = null }: ChatWin
 
   const stopHandleRef = useRef<{ stop: () => void } | null>(null);
 
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  // Bumped on every new turn / chat switch so a slow suggestions response
+  // for an older turn can't resurface.
+  const suggestionsRunRef = useRef(0);
+
+  const speechSupported = useSpeechRecognitionSupported();
+  const [isListening, setIsListening] = useState(false);
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+
   useEffect(() => {
     let cancelled = false;
     getDocuments()
@@ -95,8 +115,54 @@ export default function ChatWindow({ documentId, initialChatId = null }: ChatWin
     prewarmChatSocket();
     return () => {
       stopHandleRef.current?.stop();
+      recognitionRef.current?.abort();
     };
   }, []);
+
+  function toggleListening() {
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+      return;
+    }
+    const Ctor = getSpeechRecognitionCtor();
+    if (!Ctor) return;
+    const recognition = new Ctor();
+    recognition.lang = typeof navigator !== "undefined" ? navigator.language || "en-US" : "en-US";
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.onresult = (event) => {
+      let transcript = "";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        if (event.results[i].isFinal) transcript += event.results[i][0].transcript;
+      }
+      transcript = transcript.trim();
+      if (transcript) {
+        setDraft((prev) =>
+          `${prev}${prev && !/\s$/.test(prev) ? " " : ""}${transcript}`.slice(0, MESSAGE_MAX_LENGTH)
+        );
+      }
+    };
+    recognition.onerror = (event) => {
+      if (event.error && event.error !== "no-speech" && event.error !== "aborted") {
+        toast.error(
+          event.error === "not-allowed"
+            ? "Microphone access was blocked."
+            : "Voice input isn't working right now."
+        );
+      }
+    };
+    recognition.onend = () => {
+      recognitionRef.current = null;
+      setIsListening(false);
+    };
+    recognitionRef.current = recognition;
+    try {
+      recognition.start();
+      setIsListening(true);
+    } catch {
+      recognitionRef.current = null;
+    }
+  }
 
   function refreshChats() {
     listChats()
@@ -125,8 +191,11 @@ export default function ChatWindow({ documentId, initialChatId = null }: ChatWin
           content: m.content,
           status: m.role === "assistant" ? "done" : undefined,
           citations: m.citations ?? undefined,
+          messageId: m.role === "assistant" ? m.id : undefined,
         }))
       );
+      suggestionsRunRef.current += 1;
+      setSuggestions([]);
       const lastWithCitations = [...stored].reverse().find((m) => m.citations?.length);
       setActiveCitations(lastWithCitations?.citations ?? null);
       setChatId(id);
@@ -144,6 +213,8 @@ export default function ChatWindow({ documentId, initialChatId = null }: ChatWin
     setChatId(null);
     setMessages([]);
     setActiveCitations(null);
+    suggestionsRunRef.current += 1;
+    setSuggestions([]);
     syncUrl(null);
   }
 
@@ -179,10 +250,18 @@ export default function ChatWindow({ documentId, initialChatId = null }: ChatWin
     setActiveCitations(message.citations ?? []);
   }
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const text = draft.trim();
+    void sendQuestion(draft.trim());
+  }
+
+  async function sendQuestion(text: string) {
     if (!text || isStreaming || isLoadingChat) return;
+    recognitionRef.current?.stop();
+    suggestionsRunRef.current += 1;
+    const run = suggestionsRunRef.current;
+    setSuggestions([]);
+    let turnFailed = false;
 
     const history: ChatHistoryTurn[] = messages
       .filter((message) => message.content.trim().length > 0)
@@ -239,15 +318,21 @@ export default function ChatWindow({ documentId, initialChatId = null }: ChatWin
             content: m.content + token,
           }));
         },
-        onCitations: (citations) => {
+        onCritique: (claims) => {
+          updateMessage(assistantId, (m) => ({ ...m, critique: claims }));
+        },
+        onCitations: (citations, meta) => {
           updateMessage(assistantId, (m) => ({
             ...m,
             status: "done",
             citations,
+            messageId: meta?.messageId ?? m.messageId,
+            warning: meta?.warning,
           }));
           setActiveCitations(citations);
         },
         onError: (message, kind) => {
+          turnFailed = true;
           updateMessage(assistantId, (m) => {
             // No `kind` means a backend-authored SSE-equivalent `error` or
             // `no_context` message - already good, specific copy, render
@@ -282,6 +367,16 @@ export default function ChatWindow({ documentId, initialChatId = null }: ChatWin
           setIsStreaming(false);
           stopHandleRef.current = null;
           refreshChats();
+          if (activeChatId && !turnFailed) {
+            const forChat = activeChatId;
+            getSuggestions(forChat)
+              .then((items) => {
+                if (suggestionsRunRef.current === run) setSuggestions(items);
+              })
+              .catch(() => {
+                // Suggestions are optional; ignore failures silently.
+              });
+          }
         },
       }
     );
@@ -326,6 +421,21 @@ export default function ChatWindow({ documentId, initialChatId = null }: ChatWin
 
         <MessageStream messages={messages} onShowCitations={handleShowCitations} />
 
+        {suggestions.length > 0 && !isStreaming && (
+          <div className="flex flex-wrap gap-2 px-4 pb-1">
+            {suggestions.map((suggestion) => (
+              <button
+                key={suggestion}
+                type="button"
+                onClick={() => void sendQuestion(suggestion)}
+                className="rounded-full bg-surface-muted px-3 py-1.5 text-left text-xs font-medium text-foreground transition-colors hover:bg-primary/10 hover:text-primary"
+              >
+                {suggestion}
+              </button>
+            ))}
+          </div>
+        )}
+
         <div className="p-3">
           <form
             onSubmit={handleSubmit}
@@ -362,6 +472,24 @@ export default function ChatWindow({ documentId, initialChatId = null }: ChatWin
                   >
                     {draft.length}/{MESSAGE_MAX_LENGTH}
                   </span>
+                )}
+                {speechSupported && !isStreaming && (
+                  <button
+                    type="button"
+                    onClick={toggleListening}
+                    aria-label={isListening ? "Stop voice input" : "Start voice input"}
+                    aria-pressed={isListening}
+                    title={isListening ? "Stop voice input" : "Voice input"}
+                    className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors ${
+                      isListening
+                        ? "animate-pulse bg-danger/10 text-danger"
+                        : "text-muted hover:bg-surface hover:text-foreground"
+                    }`}
+                  >
+                    <span className="material-symbols-outlined text-[20px]">
+                      {isListening ? "mic" : "mic_none"}
+                    </span>
+                  </button>
                 )}
                 {isStreaming ? (
                   <button

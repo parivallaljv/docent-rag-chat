@@ -3,6 +3,8 @@
 import { getSupabaseBrowserClient } from "./supabaseClient";
 import type {
   ChatSummary,
+  CompareResponse,
+  UsageResponse,
   DocumentRecord,
   InsightKind,
   InsightResponse,
@@ -144,6 +146,60 @@ export async function getDocumentInsight(
     method: "POST",
     body: JSON.stringify({ kind, refresh }),
   });
+  return res.json();
+}
+
+export async function submitFeedback(
+  messageId: string,
+  rating: 1 | -1,
+  comment?: string
+): Promise<void> {
+  const trimmed = comment?.trim();
+  await apiFetch(`/messages/${encodeURIComponent(messageId)}/feedback`, {
+    method: "POST",
+    body: JSON.stringify(trimmed ? { rating, comment: trimmed.slice(0, 1000) } : { rating }),
+  });
+}
+
+export async function getSuggestions(chatId: string): Promise<string[]> {
+  const res = await apiFetch(`/chats/${encodeURIComponent(chatId)}/suggestions`, {
+    method: "POST",
+  });
+  const body = await res.json();
+  return Array.isArray(body?.suggestions)
+    ? body.suggestions.filter((s: unknown): s is string => typeof s === "string").slice(0, 3)
+    : [];
+}
+
+export async function compareDocuments(payload: {
+  document_a: string;
+  document_b: string;
+  topic: string;
+}): Promise<CompareResponse> {
+  const res = await apiFetch("/documents/compare", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  return res.json();
+}
+
+export async function getMemory(): Promise<string> {
+  const res = await apiFetch("/memory", { method: "GET" });
+  const body = await res.json();
+  return typeof body?.content === "string" ? body.content : "";
+}
+
+export async function saveMemory(content: string): Promise<string> {
+  const res = await apiFetch("/memory", {
+    method: "PUT",
+    body: JSON.stringify({ content }),
+  });
+  const body = await res.json();
+  return typeof body?.content === "string" ? body.content : content;
+}
+
+export async function getUsage(days = 30): Promise<UsageResponse> {
+  const res = await apiFetch(`/usage?days=${days}`, { method: "GET" });
   return res.json();
 }
 
