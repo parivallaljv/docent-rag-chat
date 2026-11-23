@@ -35,9 +35,9 @@ deprecation==2.1.0
     #   storage3
 distro==1.9.0
     # via google-genai
-fastapi==0.163.1
+fastapi==0.165.0
     # via -r requirements.in
-google-auth==2.62.2
+google-auth[requests]==2.62.2
     # via google-genai
 google-genai==3.3.0
     # via -r requirements.in
@@ -56,7 +56,7 @@ httpcore2==2.16.2
     # via httpx2
 httptools==0.9.0
     # via uvicorn
-httpx==0.28.1
+httpx[http2]==0.28.1
     # via
     #   -r requirements.in
     #   postgrest
@@ -110,9 +110,10 @@ pydantic-core==2.50.4
     # via pydantic
 pydantic-settings==2.16.3
     # via -r requirements.in
-pyjwt==2.15.1
+pyjwt[crypto]==2.15.1
     # via
     #   -r requirements.in
+    #   pyjwt
     #   supabase-auth
 pypdf==7.1.0
     # via -r requirements.in
@@ -148,16 +149,13 @@ truststore==0.10.5
     #   httpx2
 typing-extensions==4.16.0
     # via
-    #   anyio
     #   fastapi
     #   google-genai
-    #   httpx2
     #   opentelemetry-api
     #   pydantic
     #   pydantic-core
     #   pydantic-settings
     #   realtime
-    #   starlette
     #   typing-inspection
 typing-inspection==0.4.5
     # via
@@ -166,7 +164,7 @@ typing-inspection==0.4.5
     #   pydantic-settings
 urllib3==2.8.0
     # via requests
-uvicorn==0.54.0
+uvicorn[standard]==0.54.0
     # via -r requirements.in
 uvloop==0.23.0
     # via uvicorn
