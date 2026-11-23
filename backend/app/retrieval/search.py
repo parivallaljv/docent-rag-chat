@@ -47,6 +47,9 @@ class Candidate:
     content: str
     embedding: list[float]
     similarity: float
+    # Parent-child: wider text (this chunk + neighbours) shown to the model while
+    # citations keep showing the matched chunk itself.
+    context_content: str | None = None
 
 
 def _expand_query_with_history(query_text: str, history: Sequence[Any]) -> str:
@@ -129,3 +132,37 @@ async def search(
     if settings.RERANKER == "llm":
         candidates = await llm_rerank(query_text, candidates)
     return candidates
+
+
+def merge_neighbors(ranked: list, rows, radius: int) -> list:
+    """Return copies of `ranked` whose context_content is the matched chunk plus up to
+    `radius` neighbours per side (ordered, de-duplicated by chunk_index)."""
+    from dataclasses import replace
+
+    by_doc: dict = {}
+    for r in rows:
+        by_doc.setdefault(r["document_id"], {})[r["chunk_index"]] = r["content"]
+    out = []
+    for c in ranked:
+        chunks = by_doc.get(c.document_id, {})
+        idxs = [i for i in range(c.chunk_index - radius, c.chunk_index + radius + 1) if i in chunks]
+        text = "\n\n".join(chunks[i] for i in idxs) if idxs else c.content
+        out.append(replace(c, context_content=text))
+    return out
+
+
+async def expand_with_neighbors(pool, user_id, ranked: list, radius: int) -> list:
+    """Best-effort: on any failure the original candidates are returned unchanged."""
+    if radius <= 0 or not ranked:
+        return ranked
+    try:
+        rows = await queries.get_neighbor_chunks(
+            pool,
+            user_id=user_id,
+            wanted=[(c.document_id, c.chunk_index) for c in ranked],
+            radius=radius,
+        )
+        return merge_neighbors(ranked, rows, radius)
+    except Exception:  # noqa: BLE001
+        logger.warning("neighbour expansion failed", exc_info=True)
+        return ranked

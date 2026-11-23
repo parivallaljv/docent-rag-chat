@@ -214,3 +214,11 @@ All off by default unless noted; see `backend/.env.example`. Migrations 007 (fee
 | contextual chunks | 0.849 | 0.758 | 0.631 | 0.635 |
 
 HyDE helps recall (multi-hop recall@5 0.574 -> 0.778) at +1 LLM call per question. LLM rerank and contextual chunks did not help on this small corpus, so they stay off. Treat differences of a few points as noise at this sample size. Prompt-injection set: 12/12 resisted.
+
+### Human-in-the-loop and parent-child context
+
+- `AGENT_PROPOSALS=true` (with `AGENT_MODE=tools`): the agent can *propose* saving a short note about the user to their memory. The server stores the proposal (10-minute TTL, single use, user-scoped), sends a `proposal` event, and acts only when the client sends `approve` over the WebSocket. Only one action exists (`save_memory_note`); anything else is rejected.
+- `CHUNK_NEIGHBORS=1`: each retrieved chunk is shown to the model together with its neighbouring chunks (more surrounding context), while citations still show the matched chunk. Not measured in the eval harness (it changes context, not ranking), so it is off by default.
+
+### Deliberately not built
+Hosted cross-encoder reranker and web-search tool (need third-party keys), embedding fine-tuning (needs a training stack), Playwright end-to-end test (needs a live Supabase login).

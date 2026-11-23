@@ -79,7 +79,9 @@ async def run_comparison(
     }
 
 
-def build_tools(pool, user_id: str, search: ScopedSearch) -> dict[str, Tool]:
+def build_tools(
+    pool, user_id: str, search: ScopedSearch, allow_proposals: bool = False
+) -> dict[str, Tool]:
     async def _docs():
         return [
             d for d in await queries.list_documents(pool, user_id=user_id) if d["status"] == "ready"
@@ -135,6 +137,15 @@ def build_tools(pool, user_id: str, search: ScopedSearch) -> dict[str, Tool]:
         note = f"Calculation (tool-computed): {expr.strip()} = {value}"
         return ToolResult(text=note, note=note)
 
+    async def propose_memory_note(args: dict[str, Any]) -> ToolResult:
+        note = " ".join(str(args.get("note", "")).split())[:300]
+        if not note:
+            return ToolResult(text="error: empty note")
+        return ToolResult(
+            text="Proposal shown to the user; it is NOT saved unless they approve.",
+            proposal={"action": "save_memory_note", "text": note},
+        )
+
     tools = [
         Tool(
             "search_documents",
@@ -165,4 +176,13 @@ def build_tools(pool, user_id: str, search: ScopedSearch) -> dict[str, Tool]:
             calculate,
         ),
     ]
+    if allow_proposals:
+        tools.append(
+            Tool(
+                "propose_memory_note",
+                "Ask the user to approve saving a short note about their preferences.",
+                {"note": ("STRING", "One short sentence to remember about the user.")},
+                propose_memory_note,
+            )
+        )
     return {t.name: t for t in tools}

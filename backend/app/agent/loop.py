@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 MAX_CALLS_PER_STEP = 3
 MAX_NOTES = 5
+MAX_PROPOSALS = 2
 MAX_NOTE_CHARS = 1500
 MAX_TOOL_TEXT = 1500
 
@@ -36,7 +37,10 @@ TOOLS_SYSTEM = (
     "first results plausibly answer every part of the question, reply with exactly: "
     "DONE. Use compare_documents only for questions that compare two documents, "
     "calculate only for arithmetic the question needs, get_page only when a "
-    "specific page is named or a result is clearly cut off. Reply DONE when nothing "
+    "specific page is named or a result is clearly cut off. If propose_memory_note is "
+    "available, use it ONLY when the user explicitly states a lasting preference or fact "
+    "about themselves worth remembering; it asks the user for approval and saves nothing "
+    "by itself. Reply DONE when nothing "
     "more is needed."
 )
 
@@ -46,6 +50,7 @@ class ToolResult:
     text: str  # what the planner sees
     chunks: list[Any] = field(default_factory=list)  # evidence for the grounded prompt
     note: str | None = None  # non-chunk result passed to the prompt as a tool note
+    proposal: dict[str, str] | None = None  # side effect awaiting USER approval
 
 
 @dataclass
@@ -63,6 +68,7 @@ class ToolAgentResult:
     calls: list[str]
     steps: int
     error: str | None = None
+    proposals: list[dict[str, str]] = field(default_factory=list)
 
 
 class ToolPlanner(Protocol):
@@ -97,6 +103,7 @@ async def run_tool_agent(
     rankings: list[list[Any]] = [first]
     notes: list[str] = []
     calls: list[str] = []
+    proposals: list[dict[str, str]] = []
     observation: str | list[tuple[str, str]] = format_observation(first)
     steps = 0
     error: str | None = None
@@ -118,6 +125,8 @@ async def run_tool_agent(
             calls.append(f"{name}({', '.join(f'{k}={str(v)[:40]!r}' for k, v in args.items())})")
             if res.chunks:
                 rankings.append(res.chunks)
+            if res.proposal and len(proposals) < MAX_PROPOSALS:
+                proposals.append(res.proposal)
             if res.note and len(notes) < MAX_NOTES:
                 notes.append(res.note[:MAX_NOTE_CHARS])
             observation.append((name, sanitize_untrusted(res.text)[:MAX_TOOL_TEXT]))
@@ -133,7 +142,7 @@ async def run_tool_agent(
         if len(rankings) == 1
         else reciprocal_rank_fusion([first, *rankings], key=_chunk_key, k=rrf_k)[:top_n]
     )
-    return ToolAgentResult(candidates, notes, calls, steps, error)
+    return ToolAgentResult(candidates, notes, calls, steps, error, proposals)
 
 
 class GeminiToolPlanner:

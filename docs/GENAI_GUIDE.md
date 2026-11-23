@@ -151,6 +151,8 @@ Multi-stage Docker images (non-root, healthcheck), `docker-compose.yml` (local p
 | **User memory** | Editable notes injected as fenced context (tone, not facts) | `app/routers/memory.py` |
 | **Tracing (Langfuse)** | Per-turn timeline of stages with token counts and prompt version | `app/core/tracing.py` |
 | **Model routing** | Cheap model for easy questions, strong model for hard ones | `app/llm/routing.py` |
+| **Human-in-the-loop** | The agent proposes a side effect; nothing happens until the user approves. Proposals are single-use, expiring and user-scoped | `app/agent/proposals.py` |
+| **Parent-child chunks** | Match on small chunks, show the model the larger surrounding text | `app/retrieval/search.py` (`merge_neighbors`) |
 | **PII redaction** | Strip emails, phones, cards, keys before text leaves the process | `app/core/pii.py` |
 
 **Reading order for v2:** `app/agent/loop.py` (tool loop) -> `app/agent/tools.py` -> `app/routers/chat.py` (how modes plug in) -> `eval/run_eval.py` `run_extras` (how each idea is measured) -> `mcp_server/server.py` (a 70-line MCP server).

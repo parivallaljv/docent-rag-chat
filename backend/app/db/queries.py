@@ -374,6 +374,31 @@ async def delete_memory(pool: asyncpg.Pool, *, user_id: Any) -> None:
         await conn.execute("DELETE FROM user_memory WHERE user_id = $1", _as_uuid(user_id))
 
 
+# --- neighbouring chunks (parent-child context) -----------------------------------
+
+
+async def get_neighbor_chunks(
+    pool: asyncpg.Pool, *, user_id: Any, wanted: list[tuple[Any, int]], radius: int
+):
+    """Chunks within `radius` of each (document_id, chunk_index), for this user."""
+    if not wanted:
+        return []
+    doc_ids = [_as_uuid(d) for d, _ in wanted]
+    lows = [max(0, i - radius) for _, i in wanted]
+    highs = [i + radius for _, i in wanted]
+    async with pool.acquire() as conn:
+        return await conn.fetch(
+            "SELECT DISTINCT c.document_id, c.chunk_index, c.content FROM chunks c "
+            "JOIN unnest($2::uuid[], $3::int[], $4::int[]) AS w(doc, lo, hi) "
+            "ON c.document_id = w.doc AND c.chunk_index BETWEEN w.lo AND w.hi "
+            "WHERE c.user_id = $1 ORDER BY c.document_id, c.chunk_index",
+            _as_uuid(user_id),
+            doc_ids,
+            lows,
+            highs,
+        )
+
+
 # --- usage ---------------------------------------------------------------------
 
 

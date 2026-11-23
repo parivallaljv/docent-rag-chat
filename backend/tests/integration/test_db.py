@@ -67,6 +67,16 @@ async def _scenario():
         assert await queries.keyword_search_chunks(pool, user_id=u2, query_text="refund") == []
         await queries.keyword_search_chunks(pool, user_id=u1, query_text="!!! ' \" ) (")
 
+        # neighbouring chunks: window, ordering, per-user isolation
+        nb = await queries.get_neighbor_chunks(pool, user_id=u1, wanted=[(did, 1)], radius=1)
+        assert [r["chunk_index"] for r in nb] == [0, 1, 2]
+        nb0 = await queries.get_neighbor_chunks(pool, user_id=u1, wanted=[(did, 0)], radius=1)
+        assert [r["chunk_index"] for r in nb0] == [0, 1]
+        assert (
+            await queries.get_neighbor_chunks(pool, user_id=u2, wanted=[(did, 1)], radius=1) == []
+        )
+        assert await queries.get_neighbor_chunks(pool, user_id=u1, wanted=[], radius=1) == []
+
         # chats: isolation, titling, ordering, cascade
         ch = await queries.create_chat(pool, user_id=u1)
         assert await queries.get_chat(pool, user_id=u2, chat_id=ch["id"]) is None

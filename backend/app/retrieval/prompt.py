@@ -118,6 +118,16 @@ def _get(candidate: Any, field: str) -> Any:
     return getattr(candidate, field)
 
 
+def _prompt_text(candidate: Any) -> str:
+    """Text shown to the model: the expanded parent context when present."""
+    ctx = (
+        candidate.get("context_content")
+        if isinstance(candidate, dict)
+        else getattr(candidate, "context_content", None)
+    )
+    return ctx or _get(candidate, "content")
+
+
 def passes_relevance_guardrail(
     ranked_candidates: Sequence[Any], threshold: float = DEFAULT_SIMILARITY_THRESHOLD
 ) -> bool:
@@ -158,7 +168,7 @@ def _fit_chunks_to_budget(
     kept: list[Any] = []
     used = 0
     for c in candidates:
-        tokens = approx_token_count(_get(c, "content"))
+        tokens = approx_token_count(_prompt_text(c))
         if kept and used + tokens > budget:
             break
         kept.append(c)
@@ -199,10 +209,10 @@ def build_prompt(
     context_lines: list[str] = []
     citations: list[ContextChunk] = []
     for i, c in enumerate(fitted, start=1):
-        content = _get(c, "content")
+        content = _get(c, "content")  # matched chunk: what citations display
         context_lines.append(
             f'<excerpt id="{i}" source="{_attr(_get(c, "filename"))}" '
-            f'page="{_attr(_get(c, "page_number"))}">\n{sanitize_untrusted(content)}\n</excerpt>'
+            f'page="{_attr(_get(c, "page_number"))}">\n{sanitize_untrusted(_prompt_text(c))}\n</excerpt>'
         )
         citations.append(
             ContextChunk(

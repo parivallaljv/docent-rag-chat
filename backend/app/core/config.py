@@ -155,6 +155,10 @@ class Settings(BaseSettings):
     # Optional local model (Ollama OpenAI-compatible API) as a last fallback.
     OLLAMA_BASE_URL: str = ""  # e.g. http://localhost:11434
     OLLAMA_MODEL: str = "llama3.2"
+    AGENT_PROPOSALS: bool = False  # let the tools agent propose actions (user must approve)
+    CHUNK_NEIGHBORS: int = (
+        0  # parent-child: add this many neighbouring chunks per side to each excerpt
+    )
     AGENT_MODE: str = "search"
     AGENT_MAX_STEPS: int = 3
     AGENT_MAX_TOOL_CALLS: int = 6

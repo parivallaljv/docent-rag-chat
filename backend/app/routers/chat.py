@@ -48,6 +48,7 @@ from pydantic import ValidationError
 from .. import memory as memory_mod
 from ..agent.critic import critique_answer
 from ..agent.loop import GeminiToolPlanner, run_tool_agent
+from ..agent.proposals import apply_proposal, proposal_store
 from ..agent.tools import build_tools
 from ..agent.workflow import plan_and_execute
 from ..core.auth import TokenVerificationError, verify_token_claims
@@ -121,6 +122,7 @@ async def _run_chat_turn_inner(
             )
 
         tool_notes: list[str] = []
+        pending_proposals: list[dict] = []
         user_memory: str | None = None
         if settings.USER_MEMORY:
             try:
@@ -140,7 +142,7 @@ async def _run_chat_turn_inner(
                     top_n=settings.RETRIEVAL_TOP_N,
                 )
 
-            tools = build_tools(pool, user_id, scoped)
+            tools = build_tools(pool, user_id, scoped, settings.AGENT_PROPOSALS)
             res = await run_tool_agent(
                 first,
                 tools,
@@ -152,6 +154,12 @@ async def _run_chat_turn_inner(
                 step_timeout=settings.AGENT_STEP_TIMEOUT,
             )
             candidates, tool_notes = res.candidates, res.notes
+            for pr in res.proposals:
+                made = proposal_store.create(user_id, pr["action"], pr["text"])
+                if made is not None:
+                    pending_proposals.append(
+                        {"id": made.id, "action": made.action, "text": made.text}
+                    )
             agent_chunks_lack_embeddings = True
             trace.attrs["agent_calls"] = res.calls
             trace.attrs["agent_steps"] = res.steps
@@ -193,6 +201,9 @@ async def _run_chat_turn_inner(
                 lambda_mult=settings.MMR_LAMBDA,
             )
 
+        ranked = await search_mod.expand_with_neighbors(
+            pool, user_id, ranked, settings.CHUNK_NEIGHBORS
+        )
         history = [prompt_mod.ChatTurn(role=h.role, content=h.content) for h in payload.history]
         assembled = prompt_mod.build_prompt(
             query=payload.message,
@@ -292,6 +303,8 @@ async def _run_chat_turn_inner(
         }
         for c in select_cited(assembled.citations, valid)
     ]
+    for pr in pending_proposals:
+        yield ("proposal", pr)
     if settings.CRITIC_ENABLED and valid:
         claims = await critique_answer(
             "".join(answer_parts), select_cited(assembled.citations, valid)
@@ -542,6 +555,23 @@ async def chat_ws(websocket: WebSocket) -> None:
 
             if msg_type == "ping":
                 await send({"type": "pong"})
+                continue
+
+            if msg_type in ("approve", "reject"):
+                pid = str(msg.get("proposal_id", ""))[:64]
+                prop = proposal_store.take(user_id, pid)
+                if prop is None:
+                    status = "expired"
+                elif msg_type == "reject":
+                    status = "rejected"
+                else:
+                    try:
+                        await apply_proposal(get_pool(), prop)
+                        status = "saved"
+                    except Exception:  # noqa: BLE001
+                        logger.exception("Could not apply approved proposal")
+                        status = "failed"
+                await send({"type": "proposal_result", "proposal_id": pid, "status": status})
                 continue
 
             if msg_type == "stop":
