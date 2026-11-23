@@ -1,7 +1,13 @@
 "use client";
 
 import { getSupabaseBrowserClient } from "./supabaseClient";
-import type { DocumentRecord } from "./types";
+import type {
+  ChatSummary,
+  DocumentRecord,
+  InsightKind,
+  InsightResponse,
+  StoredChatMessage,
+} from "./types";
 
 /**
  * Base URL of the FastAPI backend. Chat and document-ingestion requests go
@@ -91,6 +97,53 @@ export async function postDocument(
  */
 export async function getDocuments(): Promise<DocumentRecord[]> {
   const res = await apiFetch("/documents", { method: "GET" });
+  return res.json();
+}
+
+export async function deleteDocument(id: string): Promise<void> {
+  await apiFetch(`/documents/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export async function retryDocument(id: string): Promise<DocumentRecord> {
+  const res = await apiFetch(`/documents/${encodeURIComponent(id)}/retry`, {
+    method: "POST",
+  });
+  return res.json();
+}
+
+export async function listChats(): Promise<ChatSummary[]> {
+  const res = await apiFetch("/chats", { method: "GET" });
+  return res.json();
+}
+
+export async function createChat(title?: string): Promise<ChatSummary> {
+  const res = await apiFetch("/chats", {
+    method: "POST",
+    body: JSON.stringify(title ? { title } : {}),
+  });
+  return res.json();
+}
+
+export async function getChatMessages(chatId: string): Promise<StoredChatMessage[]> {
+  const res = await apiFetch(`/chats/${encodeURIComponent(chatId)}/messages`, {
+    method: "GET",
+  });
+  return res.json();
+}
+
+export async function deleteChat(chatId: string): Promise<void> {
+  await apiFetch(`/chats/${encodeURIComponent(chatId)}`, { method: "DELETE" });
+}
+
+export async function getDocumentInsight(
+  documentId: string,
+  kind: InsightKind,
+  refresh = false
+): Promise<InsightResponse> {
+  const res = await apiFetch(`/documents/${encodeURIComponent(documentId)}/insights`, {
+    method: "POST",
+    body: JSON.stringify({ kind, refresh }),
+  });
   return res.json();
 }
 

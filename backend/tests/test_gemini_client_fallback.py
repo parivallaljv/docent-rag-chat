@@ -8,24 +8,24 @@ exists precisely so a demo visitor can fail over to a healthier model. Only
 quota-exhaustion (429/RESOURCE_EXHAUSTED) triggered the fallback before this
 fix. These tests mock the genai client so no live API key/network is needed.
 """
+
 from __future__ import annotations
 
 import asyncio
 import time
-from typing import List
 
 import pytest
 
 from app.llm import gemini_client
 
 
-def _collect(prompt: str, model: str) -> List[str]:
+def _collect(prompt: str, model: str) -> list[str]:
     """Run stream_chat to completion outside of a running event loop. The
     project has no pytest-asyncio dependency, so tests drive the async
     generator manually via asyncio.run rather than an @pytest.mark.asyncio
     test function."""
 
-    async def _run() -> List[str]:
+    async def _run() -> list[str]:
         return [token async for token in gemini_client.stream_chat(prompt=prompt, model=model)]
 
     return asyncio.run(_run())
@@ -42,7 +42,7 @@ class _FakeChunk:
         self.text = text
 
 
-async def _fake_stream(chunks: List[_FakeChunk]):
+async def _fake_stream(chunks: list[_FakeChunk]):
     for chunk in chunks:
         yield chunk
 
@@ -53,7 +53,7 @@ class _FakeModels:
 
     def __init__(self, script: dict):
         self.script = script
-        self.attempted: List[str] = []
+        self.attempted: list[str] = []
 
     async def generate_content_stream(self, *, model, contents, config):
         self.attempted.append(model)
@@ -93,11 +93,11 @@ async def _instant() -> None:
     return None
 
 
-def _unique_models_tried(models: _FakeModels) -> List[str]:
+def _unique_models_tried(models: _FakeModels) -> list[str]:
     """Which distinct models were attempted, in order -- ignoring how many
     same-model retries call_with_backoff made internally before giving up on
     each one, which isn't what these tests are about."""
-    seen: List[str] = []
+    seen: list[str] = []
     for name in models.attempted:
         if not seen or seen[-1] != name:
             seen.append(name)
@@ -259,7 +259,7 @@ def test_establish_budget_is_shared_across_all_candidates(monkeypatch):
     # Uses real asyncio.sleep (not the instant-patched one _patch_client's
     # other tests use) with tiny budgets, so this test measures genuine
     # elapsed time while still running fast.
-    attempted: List[str] = []
+    attempted: list[str] = []
 
     class _HangingModels:
         async def generate_content_stream(self, *, model, contents, config):

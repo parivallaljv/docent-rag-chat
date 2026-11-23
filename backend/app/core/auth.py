@@ -13,9 +13,8 @@ JWKS path can't validate the token -- so this backend works against either
 project configuration without needing to know upfront which one it's talking
 to.
 """
-from __future__ import annotations
 
-from typing import Optional
+from __future__ import annotations
 
 import jwt
 from fastapi import Depends, HTTPException, status
@@ -27,10 +26,10 @@ _bearer_scheme = HTTPBearer(auto_error=False)
 
 _ASYMMETRIC_ALGORITHMS = ["ES256", "RS256"]
 
-_jwk_client: Optional["jwt.PyJWKClient"] = None
+_jwk_client: jwt.PyJWKClient | None = None
 
 
-def _get_jwk_client() -> Optional["jwt.PyJWKClient"]:
+def _get_jwk_client() -> jwt.PyJWKClient | None:
     """Lazily builds (and caches) a PyJWKClient for the project's JWKS endpoint.
 
     PyJWKClient caches fetched keys in-process, so this only hits the network
@@ -77,16 +76,16 @@ class TokenVerificationError(Exception):
     accepted wouldn't mean anything."""
 
 
-def verify_token(token: str) -> str:
-    """Verify a raw bearer token string and return the Supabase user id (the
-    token's `sub` claim). This is the transport-agnostic core shared by both
+def verify_token_claims(token: str) -> dict:
+    """Verify a raw bearer token string and return its claims (including `sub`,
+    the Supabase user id, and `exp`). This is the transport-agnostic core shared by both
     the HTTP dependency below and the WebSocket auth handshake -- it knows
     nothing about HTTPAuthorizationCredentials, Request, or WebSocket."""
     if not token:
         raise TokenVerificationError("Missing bearer token")
 
-    payload: Optional[dict] = None
-    last_error: Optional[Exception] = None
+    payload: dict | None = None
+    last_error: Exception | None = None
 
     try:
         payload = _decode_via_jwks(token)
@@ -109,11 +108,16 @@ def verify_token(token: str) -> str:
     user_id = payload.get("sub")
     if not user_id:
         raise TokenVerificationError("Token missing 'sub' claim")
-    return user_id
+    return payload
+
+
+def verify_token(token: str) -> str:
+    """Verify a bearer token and return the Supabase user id (`sub` claim)."""
+    return verify_token_claims(token)["sub"]
 
 
 async def get_current_user_id(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer_scheme),
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
 ) -> str:
     """FastAPI dependency: validate the `Authorization: Bearer <jwt>` header and
     return the Supabase user id (the token's `sub` claim). Raises 401 on any

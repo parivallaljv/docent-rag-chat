@@ -18,6 +18,8 @@ export interface DocumentRecord {
 
 export interface ChatCitation {
   id: string;
+  /** The [n] number the answer used for this source. */
+  marker?: number;
   document_id: string;
   filename: string;
   page: number;
@@ -32,3 +34,46 @@ export interface ChatHistoryTurn {
   role: ChatRole;
   content: string;
 }
+
+export interface ChatSummary {
+  id: string;
+  title: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StoredChatMessage {
+  id: string;
+  role: ChatRole;
+  content: string;
+  citations: ChatCitation[] | null;
+  created_at: string;
+}
+
+export type InsightKind = "summary" | "key_facts" | "quiz";
+
+export interface SummaryResult {
+  summary: string;
+  bullets: string[];
+}
+
+export interface KeyFactsResult {
+  facts: { fact: string; page: number | null }[];
+}
+
+export interface QuizQuestion {
+  question: string;
+  options: string[];
+  answer_index: number;
+  explanation: string;
+  page: number | null;
+}
+
+export interface QuizResult {
+  questions: QuizQuestion[];
+}
+
+export type InsightResponse =
+  | { kind: "summary"; cached: boolean; result: SummaryResult }
+  | { kind: "key_facts"; cached: boolean; result: KeyFactsResult }
+  | { kind: "quiz"; cached: boolean; result: QuizResult };

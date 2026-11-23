@@ -4,10 +4,10 @@ Every field has a safe default so the app can be imported (and pure-logic
 modules can be unit tested) even with no .env present and no live
 credentials configured yet.
 """
+
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import List
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -85,7 +85,24 @@ class Settings(BaseSettings):
     # --- Retrieval / generation tuning ---
     RETRIEVAL_TOP_N: int = 20
     RERANK_TOP_K: int = 5
-    MMR_LAMBDA: float = 0.5
+    # 1.0 = MMR off (pure relevance order). Measured on eval/dataset.jsonl:
+    # MMR lowered hit@5 / MRR in every variant, so it is off by default.
+    MMR_LAMBDA: float = 1.0
+    # Gemini asymmetric embeddings (RETRIEVAL_DOCUMENT / RETRIEVAL_QUERY).
+    # Existing chunks embedded without task types should be re-ingested.
+    # Measured: no gain on eval/dataset.jsonl (hybrid hit@5 0.92 off vs 0.88
+    # on), and enabling it means re-ingesting existing chunks -> off.
+    EMBEDDING_TASK_TYPES: bool = False
+    # Hybrid retrieval: fuse pgvector cosine with Postgres full-text search via
+    # Reciprocal Rank Fusion. Requires migration 005 (content_tsv column).
+    # Measured: hybrid MRR 0.69 vs dense 0.60, hit@5 0.92 vs 0.83.
+    HYBRID_SEARCH: bool = True
+    RRF_K: int = 60
+    # Rewrite follow-up questions into standalone queries with one extra LLM
+    # call (falls back to history concatenation on any failure).
+    QUERY_REWRITE: bool = False
+    # pgvector HNSW query-time breadth (pgvector default is 40).
+    HNSW_EF_SEARCH: int = 100
     # Empirically measured against real gemini-embedding-001 vectors (768-dim,
     # Matryoshka-truncated + re-normalized): on-topic queries against a seeded
     # test document scored ~0.65-0.70 cosine similarity, clearly off-topic
@@ -94,16 +111,51 @@ class Settings(BaseSettings):
     MAX_PROMPT_TOKENS: int = 4000
     HISTORY_TURNS: int = 5
 
+    # --- Agentic search ---
+    # An LLM planner may issue extra refined/decomposed searches (multi-hop,
+    # comparison questions). Costs >=1 extra LLM call per turn; off by default.
+    AGENTIC_SEARCH: bool = False
+    AGENT_MODEL: str = ""  # empty = CHAT_MODEL (+ its fallbacks)
+    AGENT_MAX_ROUNDS: int = 2
+    AGENT_MAX_QUERIES: int = 4  # total searches incl. the original question
+    AGENT_STEP_TIMEOUT: float = 10.0
+
+    # Model for structured features (summary/key facts/quiz); empty = CHAT_MODEL chain.
+    INSIGHTS_MODEL: str = ""
+
+    # --- Ingestion ---
+    # Scanned PDFs (no text layer): transcribe with Gemini vision. Costs LLM quota.
+    OCR_FALLBACK: bool = True
+    OCR_MODEL: str = ""  # empty = INSIGHTS_MODEL, else the CHAT_MODEL chain
+    OCR_TIMEOUT_SECONDS: float = 90.0
+    # Per-attempt cap for structured (JSON-mode) generation; a slow model falls through.
+    STRUCTURED_TIMEOUT_SECONDS: float = 60.0
+    # On startup, re-run documents stuck pending/processing for longer than this.
+    RECOVER_STUCK_ON_STARTUP: bool = True
+    STUCK_DOCUMENT_MINUTES: int = 10
+
+    # --- Operations ---
+    LOG_FORMAT: str = "json"  # "json" | "text"
+    # /metrics is only served when this is set, and requires
+    # `Authorization: Bearer <token>`.
+    METRICS_TOKEN: str = ""
+    # Per-user chat limiter (in-memory, per process).
+    PER_USER_RATE_LIMIT: int = 10
+    PER_USER_RATE_WINDOW_SECONDS: int = 60
+    # Query-embedding cache (in-memory, per process).
+    EMBED_CACHE_SIZE: int = 512
+    EMBED_CACHE_TTL_SECONDS: int = 3600
+
     # --- Chunking ---
     CHUNK_TARGET_TOKENS: int = 500
     CHUNK_OVERLAP_RATIO: float = 0.15
 
     @property
-    def allowed_origins_list(self) -> List[str]:
+    def allowed_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.ALLOWED_ORIGINS.split(",") if origin.strip()]
 
     @property
-    def chat_model_fallbacks_list(self) -> List[str]:
+    def chat_model_fallbacks_list(self) -> list[str]:
         return [m.strip() for m in self.CHAT_MODEL_FALLBACKS.split(",") if m.strip()]
 
 

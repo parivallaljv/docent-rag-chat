@@ -3,12 +3,13 @@ embeddings. Both entry points go through core.rate_limit's backoff helper so
 transient upstream 429/503 errors from Gemini are retried instead of failing
 the request outright.
 """
+
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
-from typing import AsyncIterator, List, Optional, Tuple
+from collections.abc import AsyncIterator
 
 import httpx
 from google import genai
@@ -24,7 +25,7 @@ from ..core.rate_limit import (
 
 logger = logging.getLogger(__name__)
 
-_client: Optional[genai.Client] = None
+_client: genai.Client | None = None
 
 # Bounds on a single stream_chat() call, so a hung upstream connection or a
 # stalled response can't leave a request (and the client's SSE connection)
@@ -75,7 +76,7 @@ async def _iter_groq_sse(response: httpx.Response) -> AsyncIterator[str]:
 async def _open_groq_connection(
     model: str,
     prompt: str,
-    system_instruction: Optional[str],
+    system_instruction: str | None,
     temperature: float,
 ) -> AsyncIterator[str]:
     """Open a Groq chat-completions stream and return an async iterator of
@@ -127,7 +128,9 @@ def get_client() -> genai.Client:
 
 
 @with_backoff()
-async def embed_texts(texts: List[str], model: Optional[str] = None) -> List[List[float]]:
+async def embed_texts(
+    texts: list[str], model: str | None = None, task_type: str | None = None
+) -> list[list[float]]:
     """Embed a batch of texts. Returns the *native*-dimensional (3072-d)
     vectors as-is; truncation to 768-d + renormalization happens in
     ingestion.embedder, which is the pure-math layer that's unit-testable
@@ -136,14 +139,15 @@ async def embed_texts(texts: List[str], model: Optional[str] = None) -> List[Lis
     result = await client.aio.models.embed_content(
         model=model or settings.EMBEDDING_MODEL,
         contents=texts,
+        config=types.EmbedContentConfig(task_type=task_type) if task_type else None,
     )
     return [list(embedding.values) for embedding in result.embeddings]
 
 
 async def stream_chat(
     prompt: str,
-    system_instruction: Optional[str] = None,
-    model: Optional[str] = None,
+    system_instruction: str | None = None,
+    model: str | None = None,
     temperature: float = 0.3,
 ) -> AsyncIterator[str]:
     """Stream a chat/generation response as incremental text deltas.
@@ -188,14 +192,14 @@ async def stream_chat(
         system_instruction=system_instruction,
     )
 
-    candidates: List[Tuple[str, str]] = [("gemini", model or settings.CHAT_MODEL)]
+    candidates: list[tuple[str, str]] = [("gemini", model or settings.CHAT_MODEL)]
     candidates += [("gemini", m) for m in settings.chat_model_fallbacks_list]
     if settings.GROQ_API_KEY:
         candidates.append(("groq", settings.GROQ_MODEL))
 
     stream_iter = None
     first_chunk = None
-    last_exc: Optional[Exception] = None
+    last_exc: Exception | None = None
     loop = asyncio.get_running_loop()
     deadline = loop.time() + _ESTABLISH_BUDGET_SECONDS
 
@@ -250,7 +254,16 @@ async def stream_chat(
                 raise
             if is_quota_exhausted_error(exc):
                 logger.warning(
-                    "Model %s exhausted its daily quota, falling back to next model", candidate_model
+                    "Model %s exhausted its daily quota, falling back to next model",
+                    candidate_model,
+                )
+                continue
+            if "NOT_FOUND" in str(exc) or " 404" in str(exc)[:12]:
+                # A retired/renamed model alias (e.g. a stale "-latest") is a
+                # config problem for THIS candidate, not for the request:
+                # keep walking the chain so Groq can still answer.
+                logger.warning(
+                    "Model %s not found, falling back to next candidate", candidate_model
                 )
                 continue
             if is_retryable_error(exc):

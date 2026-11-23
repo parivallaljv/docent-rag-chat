@@ -1,6 +1,7 @@
 """Unit tests for app.retrieval.rerank's pure-python MMR reranking, using
 synthetic embeddings/relevance scores. No external calls, no credentials.
 """
+
 from app.retrieval.rerank import cosine_similarity, mmr_rerank
 
 

@@ -1,13 +1,16 @@
 import ChatWindow from "@/components/chat/ChatWindow";
 
 interface ChatPageProps {
-  searchParams: Promise<{ documentId?: string | string[] }>;
+  searchParams: Promise<{ documentId?: string | string[]; chat?: string | string[] }>;
 }
 
 export default async function ChatPage({ searchParams }: ChatPageProps) {
   const params = await searchParams;
   const raw = params.documentId;
   const documentId = Array.isArray(raw) ? raw[0] : raw ?? null;
+
+  const rawChat = params.chat;
+  const chatId = Array.isArray(rawChat) ? rawChat[0] : rawChat ?? null;
 
   return (
     <div className="flex h-[calc(100vh-9rem)] flex-col">
@@ -23,7 +26,7 @@ export default async function ChatPage({ searchParams }: ChatPageProps) {
             : "Searching across all of your documents."}
         </p>
       </div>
-      <ChatWindow documentId={documentId} />
+      <ChatWindow documentId={documentId} initialChatId={chatId} />
     </div>
   );
 }

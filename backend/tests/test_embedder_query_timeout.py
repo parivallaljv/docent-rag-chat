@@ -8,6 +8,7 @@ budget (5 retries, capped at 30s each) bounded it, and a genuinely stalled
 embedding call could hang a chat turn indefinitely with zero user-visible
 feedback. Mocks embed_texts so no live API key/network is needed.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -22,7 +23,7 @@ def _run(coro):
 
 
 def test_embed_query_times_out_instead_of_hanging_forever(monkeypatch):
-    async def hangs_forever(texts, model=None):
+    async def hangs_forever(texts, model=None, **kwargs):
         await asyncio.sleep(10)  # far longer than the timeout under test
         raise AssertionError("unreachable -- should be cut off by the timeout")
 
@@ -34,7 +35,7 @@ def test_embed_query_times_out_instead_of_hanging_forever(monkeypatch):
 
 
 def test_embed_query_still_returns_normally_when_fast(monkeypatch):
-    async def fast_embed(texts, model=None):
+    async def fast_embed(texts, model=None, **kwargs):
         assert texts == ["hello"]
         return [[3.0, 4.0] + [0.0] * (embedder.EMBEDDING_OUTPUT_DIM - 2)]
 

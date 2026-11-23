@@ -5,6 +5,7 @@ path. Uses synthetic HS256-signed JWTs and a monkeypatched empty
 SUPABASE_URL (so the JWKS path short-circuits without a network call) --
 pure logic, no live Supabase project needed.
 """
+
 from __future__ import annotations
 
 import time

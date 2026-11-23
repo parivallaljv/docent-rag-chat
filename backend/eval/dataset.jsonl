@@ -1,0 +1,33 @@
+{"id": "q01", "doc": "attention.pdf", "question": "How many identical layers make up the Transformer encoder stack?", "evidence": "composed of a stack of N = 6 identical layers"}
+{"id": "q02", "doc": "attention.pdf", "question": "What model dimension do the sub-layers and embeddings output?", "evidence": "dmodel = 512"}
+{"id": "q03", "doc": "attention.pdf", "question": "How many parallel attention heads does the base model use?", "evidence": "h = 8 parallel attention layers"}
+{"id": "q04", "doc": "attention.pdf", "question": "Which optimizer was used to train the models?", "evidence": "used the Adam optimizer"}
+{"id": "q05", "doc": "attention.pdf", "question": "What BLEU score did the big model reach on English-to-German translation?", "evidence": "28.4 BLEU"}
+{"id": "q06", "doc": "attention.pdf", "question": "Why are the dot products scaled before the softmax?", "evidence": "extremely small gradients"}
+{"id": "q07", "doc": "attention.pdf", "question": "How does the model inject information about token order?", "evidence": "sine and cosine functions of different frequencies"}
+{"id": "q08", "doc": "attention.pdf", "question": "What dropout rate was applied in the base model?", "evidence": "Pdrop = 0.1"}
+{"id": "q09", "doc": "attention.pdf", "question": "What hardware was the model trained on?", "evidence": "8 NVIDIA P100 GPUs"}
+{"id": "q10", "doc": "attention.pdf", "question": "What label smoothing value was employed during training?", "evidence": "label smoothing of value"}
+{"id": "q11", "doc": "attention.pdf", "question": "How does self-attention compare with recurrent layers in maximum path length?", "evidence": "Maximum Path Length"}
+{"id": "q12", "doc": "attention.pdf", "question": "How is the decoder prevented from attending to future positions?", "evidence": "masking, combined with fact that the output embeddings are offset by one position"}
+{"id": "q13", "doc": "bert.pdf", "question": "What fraction of WordPiece tokens is masked in the masked language model objective?", "evidence": "mask 15%"}
+{"id": "q14", "doc": "bert.pdf", "question": "What is the next sentence prediction task used for?", "evidence": "Task #2: Next Sentence Prediction"}
+{"id": "q15", "doc": "bert.pdf", "question": "How many parameters does the BERT base model have?", "evidence": "110M"}
+{"id": "q16", "doc": "bert.pdf", "question": "Which corpora was BERT pre-trained on?", "evidence": "BooksCorpus (800M words)"}
+{"id": "q17", "doc": "bert.pdf", "question": "What GLUE score did BERT reach?", "evidence": "GLUE score to 80.5%"}
+{"id": "q18", "doc": "bert.pdf", "question": "What F1 did BERT get on SQuAD v1.1?", "evidence": "Test F1 to 93.2"}
+{"id": "q19", "doc": "bert.pdf", "question": "Which batch sizes were tried when fine-tuning?", "evidence": "Batch size: 16, 32"}
+{"id": "q20", "doc": "bert.pdf", "question": "How are selected tokens replaced during masking?", "evidence": "the [MASK] token 80% of the time"}
+{"id": "q21", "doc": "bert.pdf", "question": "What happens to performance when next sentence prediction is removed?", "evidence": "No NSP"}
+{"id": "q22", "doc": "bert.pdf", "question": "How many pre-training steps were run?", "evidence": "1,000,000 steps"}
+{"id": "q23", "doc": "bert.pdf", "question": "Which pre-training task needs sentence pairs labelled IsNext or NotNext?", "evidence": "Next Sentence Prediction (NSP)"}
+{"id": "q24", "doc": "bert.pdf", "question": "How does the feature-based approach differ from fine-tuning?", "evidence": "Feature-based Approach with BERT"}
+{"id": "m01", "doc": "attention.pdf", "question": "What is the number of encoder layers, and which optimizer was used for training?", "evidence": ["composed of a stack of N = 6 identical layers", "used the Adam optimizer"], "multihop": true}
+{"id": "m02", "doc": "attention.pdf", "question": "What BLEU did the big model reach on English-to-German, and what hardware was it trained on?", "evidence": ["28.4 BLEU", "8 NVIDIA P100 GPUs"], "multihop": true}
+{"id": "m03", "doc": "attention.pdf", "question": "How many attention heads does the base model use, and why are dot products scaled?", "evidence": ["h = 8 parallel attention layers", "extremely small gradients"], "multihop": true}
+{"id": "m04", "doc": "attention.pdf", "question": "How is token order encoded, and what dropout rate does the base model use?", "evidence": ["sine and cosine functions of different frequencies", "Pdrop = 0.1"], "multihop": true}
+{"id": "m05", "doc": "bert.pdf", "question": "What GLUE score did BERT reach, and which corpora was it pre-trained on?", "evidence": ["GLUE score to 80.5%", "BooksCorpus (800M words)"], "multihop": true}
+{"id": "m06", "doc": "bert.pdf", "question": "How many parameters does BERT base have, and what SQuAD v1.1 F1 did it achieve?", "evidence": ["110M", "Test F1 to 93.2"], "multihop": true}
+{"id": "m07", "doc": "bert.pdf", "question": "What fraction of tokens gets masked, and how many pre-training steps were run?", "evidence": ["mask 15%", "1,000,000 steps"], "multihop": true}
+{"id": "m08", "doc": "bert.pdf", "question": "Which batch sizes were tried when fine-tuning, and how does the NSP task work?", "evidence": ["Batch size: 16, 32", "Task #2: Next Sentence Prediction"], "multihop": true}
+{"id": "m09", "doc": "attention.pdf", "question": "Which paper reports a BLEU score and which reports a GLUE score, and what are the numbers?", "evidence": [["attention.pdf", "28.4 BLEU"], ["bert.pdf", "GLUE score to 80.5%"]], "multihop": true}
