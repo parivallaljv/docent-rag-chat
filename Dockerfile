@@ -3,7 +3,7 @@
 # docker-compose.yml). backend/Dockerfile is the same image for hosts whose
 # build context is backend/.
 
-FROM python:3.11-slim-bookworm AS builder
+FROM python:3.15-slim-bookworm AS builder
 ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 WORKDIR /build
 RUN python -m venv /opt/venv
@@ -11,7 +11,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 COPY backend/requirements.txt .
 RUN pip install --upgrade "setuptools>=78.1.1" "wheel>=0.46.2" && pip install -r requirements.txt
 
-FROM python:3.11-slim-bookworm AS runtime
+FROM python:3.15-slim-bookworm AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH" \
