@@ -23,7 +23,7 @@ click==8.5.1
     # via
     #   -c requirements.txt
     #   uvicorn
-coverage==7.17.3
+coverage[toml]==7.17.3
     # via pytest-cov
 cryptography==50.0.2
     # via
@@ -73,18 +73,18 @@ pycparser==3.12
     # via
     #   -c requirements.txt
     #   cffi
-pydantic==2.14.3
+pydantic==2.14.4
     # via
     #   -c requirements.txt
     #   mcp
     #   mcp-types
-pydantic-core==2.50.4
+pydantic-core==2.50.5
     # via
     #   -c requirements.txt
     #   pydantic
 pygments==2.21.0
     # via pytest
-pyjwt==2.15.1
+pyjwt[crypto]==2.15.1
     # via
     #   -c requirements.txt
     #   mcp
@@ -121,15 +121,11 @@ truststore==0.10.5
 typing-extensions==4.16.0
     # via
     #   -c requirements.txt
-    #   anyio
-    #   httpx2
     #   mcp
     #   mcp-types
     #   opentelemetry-api
     #   pydantic
     #   pydantic-core
-    #   referencing
-    #   starlette
     #   typing-inspection
 typing-inspection==0.4.5
     # via
