@@ -172,3 +172,17 @@ It helps multi-part questions and is neutral on simple ones, at ~1.6 extra searc
 - **WebSocket**: the server closes the socket (code 1008) when the JWT expires, after any in-flight turn, so the client reconnects with a refreshed token; it answers `{"type":"ping"}` with `{"type":"pong"}`.
 - **HTTP hardening**: explicit CORS methods/headers; Next.js sends `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy`, `Permissions-Policy` and HSTS (no CSP yet).
 - **Tests**: `pytest -m integration` runs `db/queries.py` against a real Postgres (`TEST_DB_URL`; CI starts a pgvector service and applies the migrations).
+
+## MCP server
+
+`backend/mcp_server/` exposes your documents to any MCP client (Claude Desktop, Claude Code, Cursor) over stdio: tools `search_documents`, `list_documents`, `get_document_insight`, plus a `docent://documents` resource. It reuses the API's token verification and per-user queries, so a client only ever sees that user's data.
+
+```bash
+pip install -r backend/requirements-dev.txt   # includes the `mcp` SDK
+# Claude Code:
+claude mcp add docent -e DOCENT_ACCESS_TOKEN=<supabase access token> \
+  -e SUPABASE_DB_URL=... -e SUPABASE_URL=... -e GEMINI_API_KEY=... \
+  -- python -m mcp_server.server   # run from backend/
+```
+
+`DOCENT_ACCESS_TOKEN` is a Supabase access token (it expires, typically after an hour; tools then return an error until you set a fresh one).
