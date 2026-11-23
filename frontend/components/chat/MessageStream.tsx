@@ -7,7 +7,8 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { buildAnswerMarkdown, downloadMarkdown } from "@/lib/exportMarkdown";
 import type { ChatMessageState } from "./ChatWindow";
-import MessageActions, { FactCheck } from "./MessageActions";
+import MessageActions, { FactCheck, MemoryProposalCard } from "./MessageActions";
+import type { ProposalDecision } from "@/lib/types";
 
 // Assistant responses come back as markdown (Gemini/Groq both format
 // structured answers with headers, bold, and bullet lists) - render it as
@@ -82,6 +83,7 @@ const markdownComponents: Components = {
 interface MessageStreamProps {
   messages: ChatMessageState[];
   onShowCitations: (message: ChatMessageState) => void;
+  onProposalDecision: (message: ChatMessageState, decision: ProposalDecision) => void;
 }
 
 // How close to the bottom (in px) still counts as "pinned" -- the user
@@ -91,6 +93,7 @@ const NEAR_BOTTOM_THRESHOLD_PX = 80;
 export default function MessageStream({
   messages,
   onShowCitations,
+  onProposalDecision,
 }: MessageStreamProps) {
   const bottomRef = useRef<HTMLDivElement | null>(null);
   // Whether the view should auto-follow new content. Starts pinned (a fresh
@@ -153,6 +156,7 @@ export default function MessageStream({
                 ?.content ?? null
             }
             onShowCitations={onShowCitations}
+            onProposalDecision={onProposalDecision}
           />
         ))}
       </AnimatePresence>
@@ -165,10 +169,12 @@ function MessageBubble({
   message,
   question,
   onShowCitations,
+  onProposalDecision,
 }: {
   message: ChatMessageState;
   question: string | null;
   onShowCitations: (message: ChatMessageState) => void;
+  onProposalDecision: (message: ChatMessageState, decision: ProposalDecision) => void;
 }) {
   const isUser = message.role === "user";
 
@@ -274,6 +280,13 @@ function MessageBubble({
 
         {!isUser && message.status === "done" && message.critique && (
           <FactCheck claims={message.critique} />
+        )}
+
+        {!isUser && message.status === "done" && message.proposal && (
+          <MemoryProposalCard
+            proposal={message.proposal}
+            onDecide={(decision) => onProposalDecision(message, decision)}
+          />
         )}
 
         {!isUser && message.status === "done" && message.content && (

@@ -10,7 +10,7 @@ import {
   getSuggestions,
   listChats,
 } from "@/lib/api";
-import { prewarmChatSocket, sendChatMessage } from "@/lib/ws";
+import { prewarmChatSocket, respondToProposal, sendChatMessage } from "@/lib/ws";
 import {
   getSpeechRecognitionCtor,
   useSpeechRecognitionSupported,
@@ -22,6 +22,9 @@ import type {
   ChatSummary,
   CritiqueClaim,
   DocumentRecord,
+  MemoryProposal,
+  ProposalDecision,
+  ProposalStatus,
 } from "@/lib/types";
 import MessageStream from "./MessageStream";
 import CitationPanel from "./CitationPanel";
@@ -34,6 +37,13 @@ export type MessageStatus =
   | "done"
   | "error";
 
+/** A memory note the assistant proposed, plus where the user's answer to it
+ * stands: "pending" (awaiting a click), "sending" (answered, waiting on the
+ * server) or the server's final result. */
+export interface MessageProposal extends Pick<MemoryProposal, "id" | "text"> {
+  status: "pending" | "sending" | ProposalStatus;
+}
+
 export interface ChatMessageState {
   id: string;
   role: "user" | "assistant";
@@ -43,6 +53,7 @@ export interface ChatMessageState {
   /** Server-side id, once known (used for feedback). */
   messageId?: string;
   critique?: CritiqueClaim[];
+  proposal?: MessageProposal;
   warning?: string;
   errorMessage?: string;
   /** Set for a connection/auth/quota-level failure (as opposed to a
@@ -250,6 +261,19 @@ export default function ChatWindow({ documentId, initialChatId = null }: ChatWin
     setActiveCitations(message.citations ?? []);
   }
 
+  function handleProposalDecision(message: ChatMessageState, decision: ProposalDecision) {
+    const proposal = message.proposal;
+    if (!proposal || proposal.status !== "pending") return;
+    updateMessage(message.id, (m) =>
+      m.proposal ? { ...m, proposal: { ...m.proposal, status: "sending" } } : m
+    );
+    respondToProposal(proposal.id, decision, (status) => {
+      updateMessage(message.id, (m) =>
+        m.proposal?.id === proposal.id ? { ...m, proposal: { ...m.proposal, status } } : m
+      );
+    });
+  }
+
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     void sendQuestion(draft.trim());
@@ -320,6 +344,12 @@ export default function ChatWindow({ documentId, initialChatId = null }: ChatWin
         },
         onCritique: (claims) => {
           updateMessage(assistantId, (m) => ({ ...m, critique: claims }));
+        },
+        onProposal: (proposal) => {
+          updateMessage(assistantId, (m) => ({
+            ...m,
+            proposal: { id: proposal.id, text: proposal.text, status: "pending" },
+          }));
         },
         onCitations: (citations, meta) => {
           updateMessage(assistantId, (m) => ({
@@ -419,7 +449,11 @@ export default function ChatWindow({ documentId, initialChatId = null }: ChatWin
           onDelete={(id) => void handleDeleteChat(id)}
         />
 
-        <MessageStream messages={messages} onShowCitations={handleShowCitations} />
+        <MessageStream
+          messages={messages}
+          onShowCitations={handleShowCitations}
+          onProposalDecision={handleProposalDecision}
+        />
 
         {suggestions.length > 0 && !isStreaming && (
           <div className="flex flex-wrap gap-2 px-4 pb-1">

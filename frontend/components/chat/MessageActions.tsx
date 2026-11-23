@@ -8,7 +8,8 @@ import {
   markdownToSpeech,
   useSpeechSynthesisSupported,
 } from "@/lib/speech";
-import type { CritiqueClaim } from "@/lib/types";
+import type { CritiqueClaim, ProposalDecision } from "@/lib/types";
+import type { MessageProposal } from "./ChatWindow";
 
 const actionClass =
   "inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-xs font-medium text-muted transition-colors hover:bg-background hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50";
@@ -205,6 +206,69 @@ export function FactCheck({ claims }: { claims: CritiqueClaim[] }) {
           ))}
         </ul>
       )}
+    </div>
+  );
+}
+
+const PROPOSAL_RESULT_LABEL = {
+  saved: "Saved",
+  rejected: "Dismissed",
+  expired: "Expired",
+  failed: "Couldn't save",
+} as const;
+
+export function MemoryProposalCard({
+  proposal,
+  onDecide,
+}: {
+  proposal: MessageProposal;
+  onDecide: (decision: ProposalDecision) => void;
+}) {
+  const sending = proposal.status === "sending";
+
+  return (
+    <div className="mt-2.5 rounded-lg bg-surface px-3 py-2 shadow-card">
+      <p className="flex items-start gap-1.5 text-xs leading-relaxed text-foreground">
+        <span className="material-symbols-outlined mt-px text-[14px] text-primary">bookmark_add</span>
+        <span>
+          <span className="font-medium">Save to memory?</span> {proposal.text}
+        </span>
+      </p>
+      <div className="mt-2 flex items-center gap-2">
+        {proposal.status === "pending" || proposal.status === "sending" ? (
+          <>
+            <button
+              type="button"
+              disabled={sending}
+              onClick={() => onDecide("approve")}
+              className="rounded-md bg-primary px-2.5 py-1 text-xs font-semibold text-primary-foreground transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Approve
+            </button>
+            <button
+              type="button"
+              disabled={sending}
+              onClick={() => onDecide("reject")}
+              className={`${actionClass} bg-background`}
+            >
+              Dismiss
+            </button>
+          </>
+        ) : (
+          <span
+            role="status"
+            className={`text-xs font-medium ${
+              proposal.status === "saved"
+                ? "text-success"
+                : proposal.status === "failed"
+                  ? "text-danger"
+                  : "text-muted"
+            }`}
+          >
+            {PROPOSAL_RESULT_LABEL[proposal.status]}
+          </span>
+        )}
+      </div>
     </div>
   );
 }

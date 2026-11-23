@@ -94,6 +94,18 @@ export interface CitationsMeta {
   warning?: ChatWarning | string;
 }
 
+/** A memory note the assistant proposes saving; nothing is stored until the
+ * user approves it. */
+export interface MemoryProposal {
+  id: string;
+  action: "save_memory_note";
+  text: string;
+}
+
+export type ProposalStatus = "saved" | "rejected" | "expired" | "failed";
+
+export type ProposalDecision = "approve" | "reject";
+
 export interface CompareSource {
   filename: string;
   page: number;
