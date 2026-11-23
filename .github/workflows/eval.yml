@@ -39,7 +39,7 @@ jobs:
           key: eval-cache-${{ hashFiles('backend/app/ingestion/chunker.py', 'backend/app/ingestion/embedder.py', 'backend/eval/dataset.jsonl') }}
       - if: steps.key.outputs.present == 'yes'
         run: python -m eval.run_eval --compare eval/results/baseline.json --out eval/results/pr.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always() && steps.key.outputs.present == 'yes'
         with:
           name: eval-results
