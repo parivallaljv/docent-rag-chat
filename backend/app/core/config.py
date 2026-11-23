@@ -121,6 +121,24 @@ class Settings(BaseSettings):
     AGENT_STEP_TIMEOUT: float = 10.0
     # With AGENTIC_SEARCH on: "search" (query refinement), "tools" (multi-tool
     # loop: search/get_page/compare/calculate) or "plan" (plan-and-execute).
+    # --- Retrieval upgrades (each measured in eval/; all default off) ---
+    RERANKER: str = ""  # "" | "llm" (listwise LLM rerank of the fused candidates)
+    RERANK_MODEL: str = ""
+    RERANK_TIMEOUT_SECONDS: float = 15.0
+    HYDE: bool = False  # embed an LLM-written hypothetical answer for dense search
+    HYDE_MODEL: str = ""
+    HYDE_TIMEOUT_SECONDS: float = 10.0
+    CONTEXTUAL_CHUNKS: bool = False  # LLM context sentence prepended before embedding
+    CONTEXT_MODEL: str = ""
+    SEMANTIC_CACHE: bool = False  # reuse answers for near-identical single-turn questions
+    SEMANTIC_CACHE_THRESHOLD: float = 0.95
+    SEMANTIC_CACHE_TTL_SECONDS: float = 3600.0
+    # --- Multimodal / memory features (default off unless noted) ---
+    FIGURE_CAPTIONS: bool = False  # describe figures/tables with a vision model at ingestion
+    FIGURE_MODEL: str = ""
+    AUTO_TAGS: bool = False  # LLM topic tags per document after ingestion
+    CHAT_SUMMARY: bool = False  # rolling summary of long chats
+    USER_MEMORY: bool = True  # inject the user's own memory notes (no LLM cost)
     AGENT_MODE: str = "search"
     AGENT_MAX_STEPS: int = 3
     AGENT_MAX_TOOL_CALLS: int = 6

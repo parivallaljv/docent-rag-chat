@@ -12,13 +12,19 @@ import logging
 import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from pydantic import BaseModel, Field
 
+from ..agent.tools import run_comparison
 from ..core.auth import get_current_user_id
+from ..core.rate_limit import check_user_rate_limit, enforce_gemini_quota
+from ..core.semantic_cache import semantic_cache
 from ..db import queries
 from ..db.client import get_pool
 from ..db.models import DocumentCreateRequest, DocumentResponse
 from ..ingestion.parser import is_supported
 from ..ingestion.pipeline import delete_from_storage, run_ingestion_pipeline
+from ..llm.structured import StructuredGenerationError
+from ..retrieval import search as search_mod
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/documents", tags=["documents"])
@@ -84,6 +90,7 @@ async def delete_document(
     )
     if storage_path is None:
         raise HTTPException(status_code=404, detail="Document not found.")
+    semantic_cache.invalidate_user(user_id)
     try:
         await asyncio.to_thread(delete_from_storage, storage_path)
     except Exception:
@@ -104,3 +111,46 @@ async def retry_document(
         raise HTTPException(status_code=409, detail="Only your failed documents can be retried.")
     background_tasks.add_task(run_ingestion_pipeline, row["id"], user_id, row["storage_path"])
     return DocumentResponse(**row)
+
+
+class CompareRequest(BaseModel):
+    document_a: str = Field(max_length=200)  # filename or id
+    document_b: str = Field(max_length=200)
+    topic: str = Field(min_length=1, max_length=300)
+
+
+@router.post("/compare")
+async def compare_documents_endpoint(
+    payload: CompareRequest, user_id: str = Depends(get_current_user_id)
+) -> dict:
+    """Side-by-side similarities/differences of two of the user's documents."""
+    if not check_user_rate_limit(user_id):
+        raise HTTPException(status_code=429, detail="Too many requests. Please wait a moment.")
+    await enforce_gemini_quota()
+    pool = get_pool()
+    docs = [
+        d for d in await queries.list_documents(pool, user_id=user_id) if d["status"] == "ready"
+    ]
+
+    async def scoped(query: str, doc_id):
+        return await search_mod.search(
+            pool, user_id=user_id, query_text=query, document_id=doc_id, top_n=8
+        )
+
+    try:
+        out = await run_comparison(
+            docs, scoped, payload.document_a, payload.document_b, payload.topic
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except StructuredGenerationError as exc:
+        raise HTTPException(
+            status_code=502, detail="The AI could not produce a comparison."
+        ) from exc
+    if out is None:
+        raise HTTPException(status_code=409, detail="One document has no passages on that topic.")
+    out["sources"] = [
+        {"filename": c.filename, "page": c.page_number, "snippet": c.content[:200]}
+        for c in out.pop("chunks")
+    ]
+    return out

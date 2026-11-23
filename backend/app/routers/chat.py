@@ -45,6 +45,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 
+from .. import memory as memory_mod
 from ..agent.critic import critique_answer
 from ..agent.loop import GeminiToolPlanner, run_tool_agent
 from ..agent.tools import build_tools
@@ -58,10 +59,12 @@ from ..core.rate_limit import (
     enforce_gemini_quota,
     is_quota_exhausted_error,
 )
+from ..core.semantic_cache import semantic_cache
 from ..db import queries
 from ..db.client import get_pool
 from ..db.models import ChatMessage, ChatRequest
 from ..ingestion.chunker import approx_token_count
+from ..ingestion.embedder import embed_query
 from ..llm.gemini_client import stream_chat
 from ..retrieval import agent as agent_mod
 from ..retrieval import prompt as prompt_mod
@@ -84,6 +87,21 @@ async def _run_chat_turn_inner(
     caller and handles all framing/turn_id/transport concerns itself."""
     pool = get_pool()
 
+    cache_vec: list[float] | None = None
+    scope = str(payload.document_id) if payload.document_id else None
+    if settings.SEMANTIC_CACHE and not payload.history:
+        try:
+            cache_vec = await embed_query(payload.message)
+            hit = semantic_cache.get(user_id, scope, cache_vec)
+        except Exception:  # noqa: BLE001 -- the cache must never break a turn
+            cache_vec, hit = None, None
+        if hit is not None:
+            trace.attrs["cache_hit"] = True
+            for i in range(0, len(hit.answer), 48):
+                yield ("token", {"content": hit.answer[i : i + 48]})
+            yield ("citations", {"citations": hit.citations})
+            return
+
     try:
         _t = time.perf_counter()
 
@@ -100,6 +118,12 @@ async def _run_chat_turn_inner(
             )
 
         tool_notes: list[str] = []
+        user_memory: str | None = None
+        if settings.USER_MEMORY:
+            try:
+                user_memory = await queries.get_memory(pool, user_id=user_id)
+            except Exception:  # noqa: BLE001 -- migration 008 not applied yet: just skip
+                logger.warning("user_memory unavailable; apply migration 008", exc_info=True)
         agent_chunks_lack_embeddings = False
         if settings.AGENTIC_SEARCH and settings.AGENT_MODE == "tools":
             first = await search_one(payload.message, True)
@@ -175,6 +199,7 @@ async def _run_chat_turn_inner(
             max_prompt_tokens=settings.MAX_PROMPT_TOKENS,
             history_turns=settings.HISTORY_TURNS,
             tool_notes=tool_notes,
+            user_memory=user_memory,
         )
         trace.mark("rank_prompt", time.perf_counter() - _t)
     except asyncio.CancelledError:
@@ -274,6 +299,8 @@ async def _run_chat_turn_inner(
         payload_out["warning"] = "no_valid_citations"
     if invalid:
         payload_out["invalid_markers"] = invalid
+    if cache_vec is not None and valid and not tool_notes:
+        semantic_cache.put(user_id, scope, cache_vec, "".join(answer_parts), citations)
     yield ("citations", payload_out)
 
 
@@ -285,10 +312,10 @@ _TERMINAL_OUTCOMES = {
 }
 
 
-async def _persist(user_id: str, chat_id: Any, role: str, content: str, citations=None) -> None:
+async def _persist(user_id: str, chat_id: Any, role: str, content: str, citations=None):
     """Best-effort save: a DB hiccup must never break a live answer."""
     try:
-        await queries.add_message(
+        return await queries.add_message(
             get_pool(),
             user_id=user_id,
             chat_id=chat_id,
@@ -298,6 +325,7 @@ async def _persist(user_id: str, chat_id: Any, role: str, content: str, citation
         )
     except Exception:
         logger.exception("Failed to persist chat message")
+        return None
 
 
 async def _run_chat_turn(user_id: str, payload: ChatRequest) -> AsyncIterator[tuple[str, dict]]:
@@ -320,11 +348,23 @@ async def _run_chat_turn(user_id: str, payload: ChatRequest) -> AsyncIterator[tu
             rows = await queries.recent_messages(
                 pool, user_id=user_id, chat_id=payload.chat_id, limit=settings.HISTORY_TURNS * 2
             )
-            payload = payload.model_copy(
-                update={
-                    "history": [ChatMessage(role=r["role"], content=r["content"]) for r in rows]
-                }
-            )
+            history_msgs = [ChatMessage(role=r["role"], content=r["content"]) for r in rows]
+            if settings.CHAT_SUMMARY:
+                try:
+                    summary, _ = await queries.get_chat_summary(
+                        pool, user_id=user_id, chat_id=payload.chat_id
+                    )
+                except Exception:  # noqa: BLE001 -- migration 008 not applied yet
+                    summary = None
+                if summary:
+                    history_msgs.insert(
+                        0,
+                        ChatMessage(
+                            role="assistant",
+                            content=f"[Summary of the earlier conversation] {summary}",
+                        ),
+                    )
+            payload = payload.model_copy(update={"history": history_msgs})
             trace.attrs["history_turns"] = len(payload.history)
             await _persist(user_id, payload.chat_id, "user", payload.message)
 
@@ -333,9 +373,13 @@ async def _run_chat_turn(user_id: str, payload: ChatRequest) -> AsyncIterator[tu
             if event == "token":
                 answer.append(data["content"])
             elif payload.chat_id is not None and event == "citations":
-                await _persist(
+                mid = await _persist(
                     user_id, payload.chat_id, "assistant", "".join(answer), data["citations"]
                 )
+                if mid is not None:
+                    data = {**data, "message_id": str(mid)}
+                if settings.CHAT_SUMMARY:
+                    memory_mod.schedule_summary(get_pool(), user_id, payload.chat_id)
             elif payload.chat_id is not None and event == "no_context":
                 await _persist(user_id, payload.chat_id, "assistant", data["message"], [])
             yield event, data

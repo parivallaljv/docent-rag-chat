@@ -1,5 +1,5 @@
 """Real-Postgres checks for db/queries.py. Skipped unless TEST_DB_URL points at a
-database with migrations 001, 005, 006 applied (plus an `auth.users` table; see
+database with migrations 001, 005, 006, 007, 008 applied (plus an `auth.users` table; see
 backend/docker/00_auth_stub.sql). CI runs it against a pgvector service container."""
 
 import asyncio
@@ -88,6 +88,39 @@ async def _scenario():
         assert [m["role"] for m in msgs] == ["user", "assistant"]
         assert json.loads(msgs[1]["citations"])[0]["marker"] == 1
         assert await queries.list_messages(pool, user_id=u2, chat_id=ch["id"]) == []
+
+        # feedback: only on your own assistant answers; re-rating updates
+        ans_id, user_msg_id = msgs[1]["id"], msgs[0]["id"]
+        assert await queries.upsert_feedback(
+            pool, user_id=u1, message_id=ans_id, rating=-1, comment="wrong"
+        )
+        assert await queries.upsert_feedback(
+            pool, user_id=u1, message_id=ans_id, rating=1, comment=None
+        )
+        assert not await queries.upsert_feedback(
+            pool, user_id=u2, message_id=ans_id, rating=1, comment=None
+        )
+        assert not await queries.upsert_feedback(
+            pool, user_id=u1, message_id=user_msg_id, rating=1, comment=None
+        )
+        async with pool.acquire() as conn:
+            assert await conn.fetchval("SELECT rating FROM message_feedback") == 1
+
+        # memory + chat summary + tags (migration 008)
+        assert await queries.get_memory(pool, user_id=u1) is None
+        await queries.upsert_memory(pool, user_id=u1, content="a")
+        await queries.upsert_memory(pool, user_id=u1, content="b")
+        assert await queries.get_memory(pool, user_id=u1) == "b"
+        assert await queries.get_memory(pool, user_id=u2) is None
+        await queries.delete_memory(pool, user_id=u1)
+        assert await queries.get_memory(pool, user_id=u1) is None
+        import datetime as _dt
+
+        ts = _dt.datetime(2026, 1, 1, tzinfo=_dt.UTC)
+        assert await queries.get_chat_summary(pool, user_id=u1, chat_id=ch["id"]) == (None, None)
+        await queries.set_chat_summary(pool, user_id=u1, chat_id=ch["id"], summary="S", upto=ts)
+        assert await queries.get_chat_summary(pool, user_id=u1, chat_id=ch["id"]) == ("S", ts)
+        assert await queries.get_chat_summary(pool, user_id=u2, chat_id=ch["id"]) == (None, None)
         assert not await queries.delete_chat(pool, user_id=u2, chat_id=ch["id"])
         assert await queries.delete_chat(pool, user_id=u1, chat_id=ch["id"])
 

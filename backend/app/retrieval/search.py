@@ -16,6 +16,8 @@ from ..core.config import settings
 from ..db import queries
 from ..ingestion.embedder import embed_query
 from .fusion import reciprocal_rank_fusion
+from .hyde import hypothetical_answer
+from .llm_rerank import llm_rerank
 from .rerank import dot
 from .rewrite import rewrite_query
 
@@ -73,10 +75,15 @@ async def search(
     rewritten = await rewrite_query(query_text, history or [])
     expanded_query = rewritten or _expand_query_with_history(query_text, history or [])
     query_embedding = await embed_query(expanded_query)
+    dense_vec = query_embedding
+    if settings.HYDE:
+        hypo = await hypothetical_answer(query_text)
+        if hypo:
+            dense_vec = await embed_query(hypo)
     dense_rows = await queries.search_chunks(
         pool,
         user_id=user_id,
-        query_embedding=query_embedding,
+        query_embedding=dense_vec,
         document_id=document_id,
         limit=top_n,
     )
@@ -119,4 +126,6 @@ async def search(
                 similarity=dot(embedding, query_embedding),
             )
         )
+    if settings.RERANKER == "llm":
+        candidates = await llm_rerank(query_text, candidates)
     return candidates

@@ -263,14 +263,14 @@ async def add_message(
     role: str,
     content: str,
     citations: list[dict] | None = None,
-) -> None:
-    """Append a message, bump the chat's updated_at, and title a still-untitled
-    chat from its first user message. One transaction."""
+) -> Any:
+    """Append a message (returns its id), bump the chat's updated_at, and title
+    a still-untitled chat from its first user message. One transaction."""
     uid, cid = _as_uuid(user_id), _as_uuid(chat_id)
     async with pool.acquire() as conn, conn.transaction():
-        await conn.execute(
+        message_id = await conn.fetchval(
             "INSERT INTO messages (chat_id, user_id, role, content, citations) "
-            "VALUES ($1, $2, $3, $4, $5::jsonb)",
+            "VALUES ($1, $2, $3, $4, $5::jsonb) RETURNING id",
             cid,
             uid,
             role,
@@ -288,6 +288,90 @@ async def add_message(
                 " ".join(content.split())[:60] or DEFAULT_CHAT_TITLE,
                 DEFAULT_CHAT_TITLE,
             )
+    return message_id
+
+
+# --- feedback ------------------------------------------------------------------
+
+
+async def upsert_feedback(
+    pool: asyncpg.Pool, *, user_id: Any, message_id: Any, rating: int, comment: str | None
+) -> bool:
+    """Record a rating for one of the user's own assistant messages. Returns
+    False if the message doesn't exist / isn't theirs / isn't an assistant turn."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "INSERT INTO message_feedback (message_id, user_id, rating, comment) "
+            "SELECT m.id, m.user_id, $3, $4 FROM messages m "
+            "WHERE m.id = $1 AND m.user_id = $2 AND m.role = 'assistant' "
+            "ON CONFLICT (message_id, user_id) DO UPDATE "
+            "SET rating = EXCLUDED.rating, comment = EXCLUDED.comment, created_at = now() "
+            "RETURNING message_id",
+            _as_uuid(message_id),
+            _as_uuid(user_id),
+            rating,
+            comment,
+        )
+    return row is not None
+
+
+# --- tags, summary, memory ------------------------------------------------------
+
+
+async def set_document_tags(pool: asyncpg.Pool, *, user_id: Any, document_id: Any, tags: list[str]):
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE documents SET tags = $3 WHERE id = $1 AND user_id = $2",
+            _as_uuid(document_id),
+            _as_uuid(user_id),
+            tags,
+        )
+
+
+async def get_chat_summary(pool: asyncpg.Pool, *, user_id: Any, chat_id: Any):
+    """(summary | None, summary_upto | None)"""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT summary, summary_upto FROM chats WHERE id = $1 AND user_id = $2",
+            _as_uuid(chat_id),
+            _as_uuid(user_id),
+        )
+    return (row["summary"], row["summary_upto"]) if row else (None, None)
+
+
+async def set_chat_summary(
+    pool: asyncpg.Pool, *, user_id: Any, chat_id: Any, summary: str, upto: Any
+) -> None:
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE chats SET summary = $3, summary_upto = $4 WHERE id = $1 AND user_id = $2",
+            _as_uuid(chat_id),
+            _as_uuid(user_id),
+            summary,
+            upto,
+        )
+
+
+async def get_memory(pool: asyncpg.Pool, *, user_id: Any) -> str | None:
+    async with pool.acquire() as conn:
+        return await conn.fetchval(
+            "SELECT content FROM user_memory WHERE user_id = $1", _as_uuid(user_id)
+        )
+
+
+async def upsert_memory(pool: asyncpg.Pool, *, user_id: Any, content: str) -> None:
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO user_memory (user_id, content) VALUES ($1, $2) "
+            "ON CONFLICT (user_id) DO UPDATE SET content = EXCLUDED.content, updated_at = now()",
+            _as_uuid(user_id),
+            content,
+        )
+
+
+async def delete_memory(pool: asyncpg.Pool, *, user_id: Any) -> None:
+    async with pool.acquire() as conn:
+        await conn.execute("DELETE FROM user_memory WHERE user_id = $1", _as_uuid(user_id))
 
 
 # --- document insights ---------------------------------------------------------

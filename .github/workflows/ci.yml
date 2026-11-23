@@ -50,7 +50,7 @@ jobs:
       - run: pip install -r requirements.txt -r requirements-dev.txt
       - name: Apply migrations
         run: |
-          for f in docker/00_auth_stub.sql migrations/001_init.sql migrations/005_hybrid_search.sql migrations/006_chats_insights.sql; do
+          for f in docker/00_auth_stub.sql migrations/001_init.sql migrations/005_hybrid_search.sql migrations/006_chats_insights.sql migrations/007_feedback.sql migrations/008_features.sql; do
             PGPASSWORD=postgres psql -h localhost -U postgres -d docent -v ON_ERROR_STOP=1 -f "$f"
           done
       - run: pytest -m integration -q
